@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: soninkarago
+    runtime: python
+    plan: free
+    startCommand: python server.py
+    healthCheckPath: /api/health
+    autoDeploy: true
