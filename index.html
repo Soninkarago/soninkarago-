@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SoninkaraGo</title>
+<style>
+body{margin:0;font-family:system-ui;background:#06110c;color:#fff}.w{max-width:900px;margin:auto;padding:20px}.hero,.card{background:#0d2017;border:1px solid #234433;border-radius:22px;padding:20px;margin-bottom:14px}h1{font-size:44px;line-height:.95;margin:8px 0}small,.sub{color:#9db2a3}label{display:block;margin:12px 0 5px;color:#9db2a3}input,select,button{width:100%;padding:13px;border-radius:12px;font:inherit}input,select{background:#07150f;color:#fff;border:1px solid #234433}button{background:#dcff59;border:0;font-weight:900;margin-top:12px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.row{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid #234433}.nav{display:flex;gap:8px;margin:12px 0}.nav button{width:auto;background:#173727;color:#fff}.nav button.on{background:#dcff59;color:#06110c}.hidden{display:none}@media(max-width:700px){.grid{grid-template-columns:1fr}}
+</style></head><body><div class="w">
+<div class="hero"><small>MOUDÉRY • BONDJI • DIAWARA • BAKEL</small><h1>SoninkaraGo</h1><p>Votre trajet, en toute confiance.</p></div>
+<div class="nav"><button class="on" data-p="client">Client</button><button data-p="driver">Chauffeur</button><button data-p="admin">Admin</button></div>
+
+<section id="client"><div class="grid"><div class="card"><h2>Commander</h2>
+<label>Nom</label><input id="name"><label>Téléphone</label><input id="phone" placeholder="+221 ...">
+<label>Départ</label><select id="pickup"><option>Moudéry</option><option>Bondji</option><option>Diawara</option><option>Bakel</option></select>
+<label>Destination</label><select id="dest"><option>Bondji</option><option>Diawara</option><option>Bakel</option><option>Moudéry</option></select>
+<label>Véhicule</label><select id="vehicle"><option value="auto">Auto-taxi</option><option value="moto">Moto-taxi</option></select>
+<label>Paiement</label><select id="payment"><option>Espèces</option><option>Wave</option><option>Orange Money</option></select>
+<h3 id="fare">1 000 F</h3><button id="order">Commander</button></div>
+<div class="card"><h2>Dernière course</h2><div id="status" class="sub">Aucune course.</div></div></div></section>
+
+<section id="driver" class="hidden"><div class="card"><h2>Espace chauffeur</h2><label>Nom chauffeur</label><input id="driverName"><div id="rides"></div></div></section>
+<section id="admin" class="hidden"><div class="card"><h2>Administration</h2><div id="stats"></div><div id="adminRides"></div></div></section>
+</div>
+<script>
+const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s),money=n=>new Intl.NumberFormat('fr-FR').format(n||0)+' F';
+const tariffs={'Moudéry|Bondji':1000,'Bondji|Moudéry':1000,'Moudéry|Diawara':2500,'Diawara|Moudéry':2500,'Moudéry|Bakel':5000,'Bakel|Moudéry':5000,'Bondji|Diawara':2000,'Diawara|Bondji':2000,'Bondji|Bakel':4500,'Bakel|Bondji':4500,'Diawara|Bakel':3500,'Bakel|Diawara':3500};
+let lastRide=null;
+function fare(){let f=tariffs[$('#pickup').value+'|'+$('#dest').value]||500;if($('#vehicle').value==='moto')f=Math.max(300,Math.round(f*.7/100)*100);$('#fare').textContent=money(f);return f}
+$('#pickup').onchange=fare;$('#dest').onchange=fare;$('#vehicle').onchange=fare;
+async function post(p,d){let r=await fetch('/api'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});return await r.json()}
+async function get(p){return await (await fetch('/api'+p)).json()}
+$('#order').onclick=async()=>{if($('#pickup').value===$('#dest').value)return alert('Choisissez une destination différente');let r=await post('/rides',{client_name:$('#name').value||'Client',phone:$('#phone').value,pickup:$('#pickup').value,destination:$('#dest').value,vehicle:$('#vehicle').value,payment:$('#payment').value,fare:fare()});lastRide=r.id;refresh()}
+async function refresh(){let rs=await get('/rides'),s=await get('/stats');$('#stats').innerHTML=`<b>${s.n}</b> courses • ${money(s.volume)} volume • ${money(s.fees)} commissions`;
+$('#rides').innerHTML=rs.filter(r=>r.status!=='completed').map(r=>`<div class="row"><div><b>${r.pickup} → ${r.destination}</b><div class="sub">${r.client_name} • ${r.status}</div></div><div><b>${money(r.fare-r.fee)}</b><br>${r.status==='searching'?`<button onclick="acceptRide('${r.id}')">Accepter</button>`:`<button onclick="completeRide('${r.id}')">Terminer</button>`}</div></div>`).join('')||'<p class="sub">Aucune course.</p>';
+$('#adminRides').innerHTML=rs.map(r=>`<div class="row"><div>${r.id} • ${r.pickup} → ${r.destination}</div><div>${money(r.fare)}<br><small>${r.status}</small></div></div>`).join('');
+if(lastRide){let r=rs.find(x=>x.id===lastRide);if(r)$('#status').innerHTML=`<b>${r.id}</b><br>${r.status}${r.driver_name?'<br>Chauffeur : '+r.driver_name:''}<br>${money(r.fare)}`}}
+async function acceptRide(id){let n=$('#driverName').value.trim();if(!n)return alert('Entre le nom du chauffeur');await post('/rides/'+id+'/accept',{driver_name:n});refresh()}
+async function completeRide(id){await post('/rides/'+id+'/complete',{});refresh()}
+$$('.nav button').forEach(b=>b.onclick=()=>{$$('.nav button').forEach(x=>x.classList.remove('on'));b.classList.add('on');['client','driver','admin'].forEach(p=>$('#'+p).classList.toggle('hidden',p!==b.dataset.p));refresh()});
+fare();refresh();setInterval(refresh,4000);
+</script></body></html>
