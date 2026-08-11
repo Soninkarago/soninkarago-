@@ -3,7 +3,7 @@ from urllib.parse import urlparse
 import sqlite3, json, os, time
 
 ROOT=os.path.dirname(os.path.abspath(__file__))
-STATIC=os.path.join(ROOT,"static")
+STATISTATIC=ROOT
 DB=os.path.join(ROOT,"soninkarago.db")
 PORT=int(os.environ.get("PORT","10000"))
 
