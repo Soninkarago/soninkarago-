@@ -610,6 +610,114 @@ class App(SimpleHTTPRequestHandler):
                 ).fetchall()
 
             return self.sendj(rows)
+                    # SUIVI GPS CÔTÉ CLIENT
+        if (
+            path.startswith("/api/rides/")
+            and path.endswith("/tracking")
+        ):
+
+            ride_id = path.split("/")[3]
+
+            query = urlparse(self.path).query
+            params = {}
+
+            for item in query.split("&"):
+                if "=" in item:
+                    k, v = item.split("=", 1)
+                    params[k] = v
+
+            token = params.get("token", "")
+
+            with db() as conn:
+                ride = conn.execute(
+                    """
+                    SELECT
+                        status,
+                        driver_name,
+                        driver_lat,
+                        driver_lng,
+                        driver_location_at,
+                        tracking_token
+                    FROM rides
+                    WHERE id=%s
+                    """,
+                    (ride_id,)
+                ).fetchone()
+
+            if not ride:
+                return self.sendj(
+                    {"error": "Course introuvable"},
+                    404
+                )
+
+            if not hmac.compare_digest(
+                str(ride.get("tracking_token") or ""),
+                token
+            ):
+                return self.sendj(
+                    {"error": "Non autorisé"},
+                    401
+                )
+
+            return self.sendj({
+                "status": ride["status"],
+                "driver_name": ride["driver_name"],
+                "driver_lat": ride["driver_lat"],
+                "driver_lng": ride["driver_lng"],
+                "updated_at": ride["driver_location_at"]
+            })
+                    # POSITION CLIENT VISIBLE PAR SON CHAUFFEUR
+        if (
+            path.startswith("/api/rides/")
+            and path.endswith("/client-location")
+        ):
+
+            user = self.auth()
+
+            if (
+                not user
+                or user.get("role") != "driver"
+            ):
+                return self.sendj(
+                    {"error": "Connexion chauffeur requise"},
+                    401
+                )
+
+            ride_id = path.split("/")[3]
+
+            with db() as conn:
+                ride = conn.execute(
+                    """
+                    SELECT
+                        status,
+                        driver_id,
+                        client_lat,
+                        client_lng,
+                        client_location_at
+                    FROM rides
+                    WHERE id=%s
+                    """,
+                    (ride_id,)
+                ).fetchone()
+
+            if not ride:
+                return self.sendj(
+                    {"error": "Course introuvable"},
+                    404
+                )
+
+            if ride["driver_id"] != user.get("driver_id"):
+                return self.sendj(
+                    {"error": "Non autorisé"},
+                    403
+                )
+
+            return self.sendj({
+                "status": ride["status"],
+                "client_lat": ride["client_lat"],
+                "client_lng": ride["client_lng"],
+                "updated_at": ride["client_location_at"]
+            })
 
 
         return self.sendj(
@@ -1051,11 +1159,12 @@ tracking_token = secrets.token_urlsafe(32)
                         fee,
                         status,
                         driver_name,
-                        created_at
+                        created_at,
+                        tracking_token
                     )
                     VALUES(
                         %s,%s,%s,%s,%s,%s,
-                        %s,%s,%s,%s,%s,%s
+                        %s,%s,%s,%s,%s,%s,%s
                     )
                     """,
                     (
@@ -1070,7 +1179,8 @@ tracking_token = secrets.token_urlsafe(32)
                         fee,
                         "searching",
                         "",
-                        int(time.time())
+                        int(time.time()),
+                        tracking_token
                     )
                 )
 
@@ -1084,7 +1194,8 @@ tracking_token = secrets.token_urlsafe(32)
                         payment,
                         fare,
                         status,
-                        driver_name
+                        driver_name,
+                        tracking_token
                     FROM rides
                     WHERE id=%s
                     """,
@@ -1126,7 +1237,8 @@ tracking_token = secrets.token_urlsafe(32)
                     UPDATE rides
                     SET
                         status='accepted',
-                        driver_name=%s
+                        driver_name=%s,
+                        driver_id=%s
                     WHERE
                         id=%s
                         AND status='searching'
@@ -1135,6 +1247,10 @@ tracking_token = secrets.token_urlsafe(32)
                         user.get(
                             "name",
                             "Chauffeur"
+                        ),
+                        user.get(
+                            "driver_id",
+                            ""
                         ),
                         ride_id
                     )
@@ -1207,6 +1323,158 @@ tracking_token = secrets.token_urlsafe(32)
             return self.sendj({
                 "ok": True
             })
+                    # POSITION GPS CLIENT
+        if (
+            path.startswith("/api/rides/")
+            and path.endswith("/location/client")
+        ):
+
+            ride_id = path.split("/")[3]
+
+            tracking_token = str(
+                data.get("tracking_token", "")
+            )
+
+            coords = valid_coords(
+                data.get("lat"),
+                data.get("lng")
+            )
+
+            if not coords:
+                return self.sendj(
+                    {"error": "Position GPS invalide"},
+                    400
+                )
+
+            lat, lng = coords
+
+            with db() as conn:
+                ride = conn.execute(
+                    """
+                    SELECT status, tracking_token
+                    FROM rides
+                    WHERE id=%s
+                    """,
+                    (ride_id,)
+                ).fetchone()
+
+                if not ride:
+                    return self.sendj(
+                        {"error": "Course introuvable"},
+                        404
+                    )
+
+                if not hmac.compare_digest(
+                    str(ride.get("tracking_token") or ""),
+                    tracking_token
+                ):
+                    return self.sendj(
+                        {"error": "Non autorisé"},
+                        401
+                    )
+
+                if ride["status"] == "completed":
+                    return self.sendj(
+                        {"error": "Course terminée"},
+                        409
+                    )
+
+                conn.execute(
+                    """
+                    UPDATE rides
+                    SET
+                        client_lat=%s,
+                        client_lng=%s,
+                        client_location_at=%s
+                    WHERE id=%s
+                    """,
+                    (
+                        lat,
+                        lng,
+                        int(time.time()),
+                        ride_id
+                    )
+                )
+
+            return self.sendj({"ok": True})
+                    # POSITION GPS CHAUFFEUR
+        if (
+            path.startswith("/api/rides/")
+            and path.endswith("/location/driver")
+        ):
+
+            user = self.auth()
+
+            if (
+                not user
+                or user.get("role") != "driver"
+            ):
+                return self.sendj(
+                    {"error": "Connexion chauffeur requise"},
+                    401
+                )
+
+            ride_id = path.split("/")[3]
+
+            coords = valid_coords(
+                data.get("lat"),
+                data.get("lng")
+            )
+
+            if not coords:
+                return self.sendj(
+                    {"error": "Position GPS invalide"},
+                    400
+                )
+
+            lat, lng = coords
+
+            with db() as conn:
+                ride = conn.execute(
+                    """
+                    SELECT status, driver_id
+                    FROM rides
+                    WHERE id=%s
+                    """,
+                    (ride_id,)
+                ).fetchone()
+
+                if not ride:
+                    return self.sendj(
+                        {"error": "Course introuvable"},
+                        404
+                    )
+
+                if ride["driver_id"] != user.get("driver_id"):
+                    return self.sendj(
+                        {"error": "Cette course ne vous appartient pas"},
+                        403
+                    )
+
+                if ride["status"] != "accepted":
+                    return self.sendj(
+                        {"error": "Course non active"},
+                        409
+                    )
+
+                conn.execute(
+                    """
+                    UPDATE rides
+                    SET
+                        driver_lat=%s,
+                        driver_lng=%s,
+                        driver_location_at=%s
+                    WHERE id=%s
+                    """,
+                    (
+                        lat,
+                        lng,
+                        int(time.time()),
+                        ride_id
+                    )
+                )
+
+            return self.sendj({"ok": True})
 
 
         return self.sendj(
