@@ -181,6 +181,44 @@ def init():
                 driver_name TEXT,
                 created_at BIGINT
             )
+        """)        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS driver_id TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS client_lat DOUBLE PRECISION
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS client_lng DOUBLE PRECISION
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS driver_lat DOUBLE PRECISION
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS driver_lng DOUBLE PRECISION
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS client_location_at BIGINT
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS driver_location_at BIGINT
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS tracking_token TEXT
         """)
 
         conn.execute("""
