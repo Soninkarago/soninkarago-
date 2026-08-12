@@ -329,7 +329,21 @@ def read_token(header):
 
     except Exception:
         return None
+def valid_coords(lat, lng):
+    try:
+        lat = float(lat)
+        lng = float(lng)
 
+        if not (-90 <= lat <= 90):
+            return None
+
+        if not (-180 <= lng <= 180):
+            return None
+
+        return lat, lng
+
+    except (TypeError, ValueError):
+        return None
 
 class App(SimpleHTTPRequestHandler):
 
