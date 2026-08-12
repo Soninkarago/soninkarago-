@@ -1,6 +1,5 @@
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse
-import sqlite3
 import json
 import os
 import time
@@ -9,11 +8,15 @@ import hashlib
 import base64
 import secrets
 
+import psycopg
+from psycopg.rows import dict_row
+
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 INDEX = os.path.join(ROOT, "index.html")
-DB = os.path.join(ROOT, "soninkarago.db")
 PORT = int(os.environ.get("PORT", "10000"))
 
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 AUTH_SECRET = os.environ.get("AUTH_SECRET", "")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
@@ -23,7 +26,6 @@ except Exception:
     DRIVERS = []
 
 
-# TARIFS OFFICIELS SONINKARAGO
 ROUTES = {
     # MOTO-TAXI
     "moto_moudery_bondji": {
@@ -69,7 +71,7 @@ ROUTES = {
         "fare": 6000
     },
 
-    # MOTO - TRAJETS DANS LE MÊME VILLAGE
+    # TRAJETS LOCAUX MOTO
     "moto_moudery_local": {
         "service": "Moto-taxi",
         "pickup": "Moudéry",
@@ -146,33 +148,31 @@ ROUTES = {
 
 
 def db():
-    c = sqlite3.connect(DB, timeout=10)
-    c.row_factory = sqlite3.Row
-    return c
+    return psycopg.connect(
+        DATABASE_URL,
+        row_factory=dict_row
+    )
 
 
 def init():
-    c = db()
-
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS rides(
-            id TEXT PRIMARY KEY,
-            client_name TEXT,
-            phone TEXT,
-            pickup TEXT,
-            destination TEXT,
-            vehicle TEXT,
-            payment TEXT,
-            fare INTEGER,
-            fee INTEGER,
-            status TEXT,
-            driver_name TEXT,
-            created_at INTEGER
-        )
-    """)
-
-    c.commit()
-    c.close()
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS rides(
+                    id TEXT PRIMARY KEY,
+                    client_name TEXT,
+                    phone TEXT,
+                    pickup TEXT,
+                    destination TEXT,
+                    vehicle TEXT,
+                    payment TEXT,
+                    fare INTEGER,
+                    fee INTEGER,
+                    status TEXT,
+                    driver_name TEXT,
+                    created_at BIGINT
+                )
+            """)
 
 
 def b64(data):
@@ -235,41 +235,6 @@ def read_token(header):
 
     except Exception:
         return None
-
-
-def legacy_route(data):
-    """
-    Compatibilité temporaire avec l'ancienne page pendant
-    qu'on remplace index.html.
-    """
-
-    pickup = str(data.get("pickup", "")).strip()
-    destination = str(data.get("destination", "")).strip()
-    vehicle = str(data.get("vehicle", "")).strip()
-
-    if vehicle == "moto":
-        lookup = {
-            ("Moudéry", "Bondji"): "moto_moudery_bondji",
-            ("Bondji", "Moudéry"): "moto_bondji_moudery",
-            ("Moudéry", "Diawara"): "moto_moudery_diawara",
-            ("Diawara", "Moudéry"): "moto_diawara_moudery",
-            ("Moudéry", "Bakel"): "moto_moudery_bakel",
-            ("Bakel", "Moudéry"): "moto_bakel_moudery",
-        }
-
-        return lookup.get((pickup, destination))
-
-    if vehicle == "auto":
-        lookup = {
-            ("Moudéry", "Bondji"): "car_moudery_bondji",
-            ("Bondji", "Moudéry"): "car_bondji_moudery",
-            ("Moudéry", "Diawara"): "car_moudery_diawara",
-            ("Diawara", "Moudéry"): "car_diawara_moudery",
-        }
-
-        return lookup.get((pickup, destination))
-
-    return None
 
 
 class App(SimpleHTTPRequestHandler):
@@ -346,24 +311,20 @@ class App(SimpleHTTPRequestHandler):
                 "Content-Type",
                 "text/html; charset=utf-8"
             )
-
             self.send_header(
                 "Content-Length",
                 str(len(body))
             )
-
             self.send_header(
                 "X-Content-Type-Options",
                 "nosniff"
             )
-
             self.send_header(
                 "X-Frame-Options",
                 "DENY"
             )
 
             self.end_headers()
-
             self.wfile.write(body)
 
         except Exception:
@@ -377,35 +338,34 @@ class App(SimpleHTTPRequestHandler):
             return self.serve_index()
 
         if path == "/api/health":
-            return self.sendj({"ok": True})
+            return self.sendj({
+                "ok": True,
+                "database": "postgresql"
+            })
 
-        # Client : consulter uniquement une course précise
         if (
             path.startswith("/api/rides/")
             and path.count("/") == 3
         ):
             ride_id = path.split("/")[3]
 
-            c = db()
-
-            row = c.execute(
-                """
-                SELECT
-                    id,
-                    pickup,
-                    destination,
-                    vehicle,
-                    payment,
-                    fare,
-                    status,
-                    driver_name
-                FROM rides
-                WHERE id=?
-                """,
-                (ride_id,)
-            ).fetchone()
-
-            c.close()
+            with db() as conn:
+                row = conn.execute(
+                    """
+                    SELECT
+                        id,
+                        pickup,
+                        destination,
+                        vehicle,
+                        payment,
+                        fare,
+                        status,
+                        driver_name
+                    FROM rides
+                    WHERE id=%s
+                    """,
+                    (ride_id,)
+                ).fetchone()
 
             if not row:
                 return self.sendj(
@@ -413,9 +373,8 @@ class App(SimpleHTTPRequestHandler):
                     404
                 )
 
-            return self.sendj(dict(row))
+            return self.sendj(row)
 
-        # Chauffeur ou admin
         if path == "/api/rides":
 
             user = self.auth()
@@ -430,58 +389,53 @@ class App(SimpleHTTPRequestHandler):
                     401
                 )
 
-            c = db()
+            with db() as conn:
 
-            if user["role"] == "admin":
+                if user["role"] == "admin":
 
-                rows = c.execute(
-                    """
-                    SELECT *
-                    FROM rides
-                    ORDER BY created_at DESC
-                    """
-                ).fetchall()
+                    rows = conn.execute(
+                        """
+                        SELECT *
+                        FROM rides
+                        ORDER BY created_at DESC
+                        """
+                    ).fetchall()
 
-            else:
+                else:
 
-                rows = c.execute(
-                    """
-                    SELECT
-                        id,
-                        client_name,
-                        pickup,
-                        destination,
-                        vehicle,
-                        payment,
-                        fare,
-                        fee,
-                        status,
-                        driver_name,
-                        created_at
-                    FROM rides
-                    WHERE
-                        status='searching'
-                        OR (
-                            status='accepted'
-                            AND driver_name=?
+                    rows = conn.execute(
+                        """
+                        SELECT
+                            id,
+                            client_name,
+                            pickup,
+                            destination,
+                            vehicle,
+                            payment,
+                            fare,
+                            fee,
+                            status,
+                            driver_name,
+                            created_at
+                        FROM rides
+                        WHERE
+                            status='searching'
+                            OR (
+                                status='accepted'
+                                AND driver_name=%s
+                            )
+                        ORDER BY created_at DESC
+                        """,
+                        (
+                            user.get(
+                                "name",
+                                ""
+                            ),
                         )
-                    ORDER BY created_at DESC
-                    """,
-                    (
-                        user.get(
-                            "name",
-                            ""
-                        ),
-                    )
-                ).fetchall()
+                    ).fetchall()
 
-            c.close()
+            return self.sendj(rows)
 
-            return self.sendj(
-                [dict(r) for r in rows]
-            )
-
-        # Admin uniquement
         if path == "/api/stats":
 
             user = self.auth()
@@ -495,27 +449,24 @@ class App(SimpleHTTPRequestHandler):
                     401
                 )
 
-            c = db()
+            with db() as conn:
 
-            row = c.execute("""
-                SELECT
-                    COUNT(*) AS n,
-                    COALESCE(
-                        SUM(fare),
-                        0
-                    ) AS volume,
-                    COALESCE(
-                        SUM(fee),
-                        0
-                    ) AS fees
-                FROM rides
-            """).fetchone()
+                row = conn.execute("""
+                    SELECT
+                        COUNT(*) AS n,
+                        COALESCE(
+                            SUM(fare),
+                            0
+                        ) AS volume,
+                        COALESCE(
+                            SUM(fee),
+                            0
+                        ) AS fees
+                    FROM rides
+                """).fetchone()
 
-            c.close()
+            return self.sendj(row)
 
-            return self.sendj(dict(row))
-
-        # Aucun accès aux fichiers privés
         return self.sendj(
             {"error": "Introuvable"},
             404
@@ -526,7 +477,6 @@ class App(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         data = self.body()
 
-        # Connexion chauffeur
         if path == "/api/login/driver":
 
             phone = str(
@@ -543,21 +493,11 @@ class App(SimpleHTTPRequestHandler):
 
                 if (
                     hmac.compare_digest(
-                        str(
-                            d.get(
-                                "phone",
-                                ""
-                            )
-                        ),
+                        str(d.get("phone", "")),
                         phone
                     )
                     and hmac.compare_digest(
-                        str(
-                            d.get(
-                                "pin",
-                                ""
-                            )
-                        ),
+                        str(d.get("pin", "")),
                         pin
                     )
                 ):
@@ -591,7 +531,6 @@ class App(SimpleHTTPRequestHandler):
                     name
             })
 
-        # Connexion admin
         if path == "/api/login/admin":
 
             password = str(
@@ -625,7 +564,6 @@ class App(SimpleHTTPRequestHandler):
                     )
             })
 
-        # Nouvelle commande
         if path == "/api/rides":
 
             route_code = str(
@@ -634,14 +572,6 @@ class App(SimpleHTTPRequestHandler):
                     ""
                 )
             ).strip()
-
-            # Ancienne interface :
-            # compatibilité durant la mise à jour
-            if not route_code:
-                route_code = (
-                    legacy_route(data)
-                    or ""
-                )
 
             route = ROUTES.get(route_code)
 
@@ -656,8 +586,6 @@ class App(SimpleHTTPRequestHandler):
                 )
 
             fare = int(route["fare"])
-
-            # Commission SoninkaraGo : 10 %
             fee = round(fare * 0.10)
 
             ride_id = (
@@ -686,58 +614,67 @@ class App(SimpleHTTPRequestHandler):
                 )
             ).strip()[:30]
 
-            c = db()
+            with db() as conn:
 
-            c.execute(
-                """
-                INSERT INTO rides
-                VALUES(
-                    ?,?,?,?,?,?,?,?,?,?,?,?
+                conn.execute(
+                    """
+                    INSERT INTO rides(
+                        id,
+                        client_name,
+                        phone,
+                        pickup,
+                        destination,
+                        vehicle,
+                        payment,
+                        fare,
+                        fee,
+                        status,
+                        driver_name,
+                        created_at
+                    )
+                    VALUES(
+                        %s,%s,%s,%s,%s,%s,
+                        %s,%s,%s,%s,%s,%s
+                    )
+                    """,
+                    (
+                        ride_id,
+                        client_name or "Client",
+                        phone,
+                        route["pickup"],
+                        route["destination"],
+                        route["service"],
+                        payment,
+                        fare,
+                        fee,
+                        "searching",
+                        "",
+                        int(time.time())
+                    )
                 )
-                """,
-                (
-                    ride_id,
-                    client_name or "Client",
-                    phone,
-                    route["pickup"],
-                    route["destination"],
-                    route["service"],
-                    payment,
-                    fare,
-                    fee,
-                    "searching",
-                    "",
-                    int(time.time())
-                )
-            )
 
-            c.commit()
-
-            row = c.execute(
-                """
-                SELECT
-                    id,
-                    pickup,
-                    destination,
-                    vehicle,
-                    payment,
-                    fare,
-                    status,
-                    driver_name
-                FROM rides
-                WHERE id=?
-                """,
-                (ride_id,)
-            ).fetchone()
-
-            c.close()
+                row = conn.execute(
+                    """
+                    SELECT
+                        id,
+                        pickup,
+                        destination,
+                        vehicle,
+                        payment,
+                        fare,
+                        status,
+                        driver_name
+                    FROM rides
+                    WHERE id=%s
+                    """,
+                    (ride_id,)
+                ).fetchone()
 
             return self.sendj(
-                dict(row),
+                row,
                 201
             )
 
-        # Chauffeur accepte une course
         if (
             path.startswith("/api/rides/")
             and path.endswith("/accept")
@@ -759,32 +696,28 @@ class App(SimpleHTTPRequestHandler):
 
             ride_id = path.split("/")[3]
 
-            c = db()
+            with db() as conn:
 
-            cur = c.execute(
-                """
-                UPDATE rides
-                SET
-                    status='accepted',
-                    driver_name=?
-                WHERE
-                    id=?
-                    AND status='searching'
-                """,
-                (
-                    user.get(
-                        "name",
-                        "Chauffeur"
-                    ),
-                    ride_id
+                cur = conn.execute(
+                    """
+                    UPDATE rides
+                    SET
+                        status='accepted',
+                        driver_name=%s
+                    WHERE
+                        id=%s
+                        AND status='searching'
+                    """,
+                    (
+                        user.get(
+                            "name",
+                            "Chauffeur"
+                        ),
+                        ride_id
+                    )
                 )
-            )
 
-            c.commit()
-
-            changed = cur.rowcount
-
-            c.close()
+                changed = cur.rowcount
 
             if not changed:
 
@@ -798,7 +731,6 @@ class App(SimpleHTTPRequestHandler):
 
             return self.sendj({"ok": True})
 
-        # Chauffeur termine sa course
         if (
             path.startswith("/api/rides/")
             and path.endswith("/complete")
@@ -820,31 +752,27 @@ class App(SimpleHTTPRequestHandler):
 
             ride_id = path.split("/")[3]
 
-            c = db()
+            with db() as conn:
 
-            cur = c.execute(
-                """
-                UPDATE rides
-                SET status='completed'
-                WHERE
-                    id=?
-                    AND status='accepted'
-                    AND driver_name=?
-                """,
-                (
-                    ride_id,
-                    user.get(
-                        "name",
-                        ""
+                cur = conn.execute(
+                    """
+                    UPDATE rides
+                    SET status='completed'
+                    WHERE
+                        id=%s
+                        AND status='accepted'
+                        AND driver_name=%s
+                    """,
+                    (
+                        ride_id,
+                        user.get(
+                            "name",
+                            ""
+                        )
                     )
                 )
-            )
 
-            c.commit()
-
-            changed = cur.rowcount
-
-            c.close()
+                changed = cur.rowcount
 
             if not changed:
 
@@ -865,6 +793,11 @@ class App(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL doit être configuré dans Render"
+        )
 
     if not AUTH_SECRET:
         raise RuntimeError(
