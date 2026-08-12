@@ -20,11 +20,6 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 AUTH_SECRET = os.environ.get("AUTH_SECRET", "")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
-try:
-    DRIVERS = json.loads(os.environ.get("DRIVERS_JSON", "[]"))
-except Exception:
-    DRIVERS = []
-
 
 ROUTES = {
     # MOTO-TAXI
@@ -71,7 +66,7 @@ ROUTES = {
         "fare": 6000
     },
 
-    # TRAJETS LOCAUX MOTO
+    # MOTO LOCAL
     "moto_moudery_local": {
         "service": "Moto-taxi",
         "pickup": "Moudéry",
@@ -147,6 +142,20 @@ ROUTES = {
 }
 
 
+ALLOWED_VILLAGES = [
+    "Moudéry",
+    "Bondji",
+    "Diawara",
+    "Bakel"
+]
+
+ALLOWED_VEHICLES = [
+    "Moto-taxi",
+    "3 roues",
+    "Voiture taxi"
+]
+
+
 def db():
     return psycopg.connect(
         DATABASE_URL,
@@ -156,38 +165,81 @@ def db():
 
 def init():
     with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS rides(
-                    id TEXT PRIMARY KEY,
-                    client_name TEXT,
-                    phone TEXT,
-                    pickup TEXT,
-                    destination TEXT,
-                    vehicle TEXT,
-                    payment TEXT,
-                    fare INTEGER,
-                    fee INTEGER,
-                    status TEXT,
-                    driver_name TEXT,
-                    created_at BIGINT
-                )
-            """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS rides(
+                id TEXT PRIMARY KEY,
+                client_name TEXT,
+                phone TEXT,
+                pickup TEXT,
+                destination TEXT,
+                vehicle TEXT,
+                payment TEXT,
+                fare INTEGER,
+                fee INTEGER,
+                status TEXT,
+                driver_name TEXT,
+                created_at BIGINT
+            )
+        """)
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS drivers(
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                phone TEXT UNIQUE NOT NULL,
+                village TEXT NOT NULL,
+                vehicle TEXT NOT NULL,
+                pin_hash TEXT NOT NULL,
+                pin_salt TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at BIGINT NOT NULL
+            )
+        """)
+
+
+def hash_pin(pin, salt=None):
+    if salt is None:
+        salt = secrets.token_hex(16)
+
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        pin.encode(),
+        salt.encode(),
+        150000
+    ).hex()
+
+    return digest, salt
+
+
+def verify_pin(pin, stored_hash, salt):
+    digest, _ = hash_pin(pin, salt)
+
+    return hmac.compare_digest(
+        digest,
+        stored_hash
+    )
 
 
 def b64(data):
-    return base64.urlsafe_b64encode(data).decode().rstrip("=")
+    return base64.urlsafe_b64encode(
+        data
+    ).decode().rstrip("=")
 
 
 def b64decode(data):
     data += "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode(data.encode())
+
+    return base64.urlsafe_b64decode(
+        data.encode()
+    )
 
 
-def make_token(role, name=""):
+def make_token(role, name="", driver_id=""):
     payload = {
         "role": role,
         "name": name,
+        "driver_id": driver_id,
         "exp": int(time.time()) + (12 * 60 * 60)
     }
 
@@ -213,6 +265,7 @@ def read_token(header):
 
     try:
         token = header[7:].strip()
+
         encoded, signature = token.split(".", 1)
 
         expected = hmac.new(
@@ -221,7 +274,10 @@ def read_token(header):
             hashlib.sha256
         ).hexdigest()
 
-        if not hmac.compare_digest(signature, expected):
+        if not hmac.compare_digest(
+            signature,
+            expected
+        ):
             return None
 
         payload = json.loads(
@@ -246,26 +302,32 @@ class App(SimpleHTTPRequestHandler):
         ).encode()
 
         self.send_response(status)
+
         self.send_header(
             "Content-Type",
             "application/json; charset=utf-8"
         )
+
         self.send_header(
             "Content-Length",
             str(len(body))
         )
+
         self.send_header(
             "Cache-Control",
             "no-store"
         )
+
         self.send_header(
             "X-Content-Type-Options",
             "nosniff"
         )
+
         self.send_header(
             "X-Frame-Options",
             "DENY"
         )
+
         self.end_headers()
 
         self.wfile.write(body)
@@ -280,7 +342,7 @@ class App(SimpleHTTPRequestHandler):
                 )
             )
 
-            if length > 10000:
+            if length > 20000:
                 return {}
 
             if not length:
@@ -311,20 +373,24 @@ class App(SimpleHTTPRequestHandler):
                 "Content-Type",
                 "text/html; charset=utf-8"
             )
+
             self.send_header(
                 "Content-Length",
                 str(len(body))
             )
+
             self.send_header(
                 "X-Content-Type-Options",
                 "nosniff"
             )
+
             self.send_header(
                 "X-Frame-Options",
                 "DENY"
             )
 
             self.end_headers()
+
             self.wfile.write(body)
 
         except Exception:
@@ -343,6 +409,7 @@ class App(SimpleHTTPRequestHandler):
                 "database": "postgresql"
             })
 
+        # Client : suivi de sa course
         if (
             path.startswith("/api/rides/")
             and path.count("/") == 3
@@ -375,8 +442,9 @@ class App(SimpleHTTPRequestHandler):
 
             return self.sendj(row)
 
-        if path == "/api/rides":
 
+        # Liste des courses
+        if path == "/api/rides":
             user = self.auth()
 
             if (
@@ -392,7 +460,6 @@ class App(SimpleHTTPRequestHandler):
             with db() as conn:
 
                 if user["role"] == "admin":
-
                     rows = conn.execute(
                         """
                         SELECT *
@@ -402,7 +469,6 @@ class App(SimpleHTTPRequestHandler):
                     ).fetchall()
 
                 else:
-
                     rows = conn.execute(
                         """
                         SELECT
@@ -436,8 +502,9 @@ class App(SimpleHTTPRequestHandler):
 
             return self.sendj(rows)
 
-        if path == "/api/stats":
 
+        # Statistiques Admin
+        if path == "/api/stats":
             user = self.auth()
 
             if (
@@ -450,22 +517,48 @@ class App(SimpleHTTPRequestHandler):
                 )
 
             with db() as conn:
-
                 row = conn.execute("""
                     SELECT
                         COUNT(*) AS n,
-                        COALESCE(
-                            SUM(fare),
-                            0
-                        ) AS volume,
-                        COALESCE(
-                            SUM(fee),
-                            0
-                        ) AS fees
+                        COALESCE(SUM(fare),0) AS volume,
+                        COALESCE(SUM(fee),0) AS fees
                     FROM rides
                 """).fetchone()
 
             return self.sendj(row)
+
+
+        # Liste des chauffeurs pour Admin
+        if path == "/api/admin/drivers":
+            user = self.auth()
+
+            if (
+                not user
+                or user.get("role") != "admin"
+            ):
+                return self.sendj(
+                    {"error": "Non autorisé"},
+                    401
+                )
+
+            with db() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT
+                        id,
+                        name,
+                        phone,
+                        village,
+                        vehicle,
+                        status,
+                        created_at
+                    FROM drivers
+                    ORDER BY created_at DESC
+                    """
+                ).fetchall()
+
+            return self.sendj(rows)
+
 
         return self.sendj(
             {"error": "Introuvable"},
@@ -477,6 +570,148 @@ class App(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         data = self.body()
 
+
+        # INSCRIPTION CHAUFFEUR
+        if path == "/api/register/driver":
+
+            name = str(
+                data.get("name", "")
+            ).strip()
+
+            phone = str(
+                data.get("phone", "")
+            ).strip()
+
+            village = str(
+                data.get("village", "")
+            ).strip()
+
+            vehicle = str(
+                data.get("vehicle", "")
+            ).strip()
+
+            pin = str(
+                data.get("pin", "")
+            ).strip()
+
+
+            if len(name) < 2:
+                return self.sendj(
+                    {
+                        "error":
+                        "Nom et prénom requis"
+                    },
+                    400
+                )
+
+
+            if len(phone) < 8:
+                return self.sendj(
+                    {
+                        "error":
+                        "Numéro de téléphone invalide"
+                    },
+                    400
+                )
+
+
+            if village not in ALLOWED_VILLAGES:
+                return self.sendj(
+                    {
+                        "error":
+                        "Village invalide"
+                    },
+                    400
+                )
+
+
+            if vehicle not in ALLOWED_VEHICLES:
+                return self.sendj(
+                    {
+                        "error":
+                        "Type de véhicule invalide"
+                    },
+                    400
+                )
+
+
+            if (
+                not pin.isdigit()
+                or len(pin) < 4
+                or len(pin) > 6
+            ):
+                return self.sendj(
+                    {
+                        "error":
+                        "Le PIN doit contenir 4 à 6 chiffres"
+                    },
+                    400
+                )
+
+
+            pin_hash, pin_salt = hash_pin(pin)
+
+            driver_id = (
+                "DRV-"
+                + secrets.token_hex(5).upper()
+            )
+
+
+            try:
+                with db() as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO drivers(
+                            id,
+                            name,
+                            phone,
+                            village,
+                            vehicle,
+                            pin_hash,
+                            pin_salt,
+                            status,
+                            created_at
+                        )
+                        VALUES(
+                            %s,%s,%s,%s,%s,
+                            %s,%s,%s,%s
+                        )
+                        """,
+                        (
+                            driver_id,
+                            name[:100],
+                            phone[:30],
+                            village,
+                            vehicle,
+                            pin_hash,
+                            pin_salt,
+                            "pending",
+                            int(time.time())
+                        )
+                    )
+
+            except psycopg.errors.UniqueViolation:
+                return self.sendj(
+                    {
+                        "error":
+                        "Ce numéro est déjà inscrit"
+                    },
+                    409
+                )
+
+
+            return self.sendj(
+                {
+                    "ok": True,
+                    "status": "pending",
+                    "message":
+                    "Inscription envoyée. Votre compte doit être validé par SoninkaraGo."
+                },
+                201
+            )
+
+
+        # CONNEXION CHAUFFEUR
         if path == "/api/login/driver":
 
             phone = str(
@@ -487,50 +722,92 @@ class App(SimpleHTTPRequestHandler):
                 data.get("pin", "")
             ).strip()
 
-            driver = None
 
-            for d in DRIVERS:
+            with db() as conn:
+                driver = conn.execute(
+                    """
+                    SELECT *
+                    FROM drivers
+                    WHERE phone=%s
+                    """,
+                    (phone,)
+                ).fetchone()
 
-                if (
-                    hmac.compare_digest(
-                        str(d.get("phone", "")),
-                        phone
-                    )
-                    and hmac.compare_digest(
-                        str(d.get("pin", "")),
-                        pin
-                    )
-                ):
-                    driver = d
-                    break
 
             if not driver:
-
                 return self.sendj(
                     {
                         "error":
-                        "Téléphone ou code PIN incorrect"
+                        "Téléphone ou PIN incorrect"
                     },
                     401
                 )
 
-            name = str(
-                driver.get(
-                    "name",
-                    "Chauffeur"
+
+            if driver["status"] == "pending":
+                return self.sendj(
+                    {
+                        "error":
+                        "Votre inscription est encore en attente de validation"
+                    },
+                    403
                 )
-            )
+
+
+            if driver["status"] == "rejected":
+                return self.sendj(
+                    {
+                        "error":
+                        "Votre inscription n'a pas été acceptée"
+                    },
+                    403
+                )
+
+
+            if driver["status"] != "approved":
+                return self.sendj(
+                    {
+                        "error":
+                        "Compte chauffeur inactif"
+                    },
+                    403
+                )
+
+
+            if not verify_pin(
+                pin,
+                driver["pin_hash"],
+                driver["pin_salt"]
+            ):
+                return self.sendj(
+                    {
+                        "error":
+                        "Téléphone ou PIN incorrect"
+                    },
+                    401
+                )
+
 
             return self.sendj({
                 "token":
                     make_token(
                         "driver",
-                        name
+                        driver["name"],
+                        driver["id"]
                     ),
+
                 "name":
-                    name
+                    driver["name"],
+
+                "vehicle":
+                    driver["vehicle"],
+
+                "village":
+                    driver["village"]
             })
 
+
+        # CONNEXION ADMIN
         if path == "/api/login/admin":
 
             password = str(
@@ -547,7 +824,6 @@ class App(SimpleHTTPRequestHandler):
                     ADMIN_PASSWORD
                 )
             ):
-
                 return self.sendj(
                     {
                         "error":
@@ -564,6 +840,96 @@ class App(SimpleHTTPRequestHandler):
                     )
             })
 
+
+        # ADMIN ACCEPTE CHAUFFEUR
+        if (
+            path.startswith("/api/admin/drivers/")
+            and path.endswith("/approve")
+        ):
+
+            user = self.auth()
+
+            if (
+                not user
+                or user.get("role") != "admin"
+            ):
+                return self.sendj(
+                    {"error": "Non autorisé"},
+                    401
+                )
+
+            driver_id = path.split("/")[4]
+
+            with db() as conn:
+                cur = conn.execute(
+                    """
+                    UPDATE drivers
+                    SET status='approved'
+                    WHERE id=%s
+                    """,
+                    (driver_id,)
+                )
+
+            if not cur.rowcount:
+                return self.sendj(
+                    {
+                        "error":
+                        "Chauffeur introuvable"
+                    },
+                    404
+                )
+
+            return self.sendj({
+                "ok": True,
+                "status": "approved"
+            })
+
+
+        # ADMIN REFUSE CHAUFFEUR
+        if (
+            path.startswith("/api/admin/drivers/")
+            and path.endswith("/reject")
+        ):
+
+            user = self.auth()
+
+            if (
+                not user
+                or user.get("role") != "admin"
+            ):
+                return self.sendj(
+                    {"error": "Non autorisé"},
+                    401
+                )
+
+            driver_id = path.split("/")[4]
+
+            with db() as conn:
+                cur = conn.execute(
+                    """
+                    UPDATE drivers
+                    SET status='rejected'
+                    WHERE id=%s
+                    """,
+                    (driver_id,)
+                )
+
+            if not cur.rowcount:
+                return self.sendj(
+                    {
+                        "error":
+                        "Chauffeur introuvable"
+                    },
+                    404
+                )
+
+            return self.sendj({
+                "ok": True,
+                "status": "rejected"
+            })
+
+
+        # CRÉATION COURSE CLIENT
         if path == "/api/rides":
 
             route_code = str(
@@ -576,7 +942,6 @@ class App(SimpleHTTPRequestHandler):
             route = ROUTES.get(route_code)
 
             if not route:
-
                 return self.sendj(
                     {
                         "error":
@@ -586,7 +951,10 @@ class App(SimpleHTTPRequestHandler):
                 )
 
             fare = int(route["fare"])
-            fee = round(fare * 0.10)
+
+            fee = round(
+                fare * 0.10
+            )
 
             ride_id = (
                 "SG-"
@@ -613,6 +981,7 @@ class App(SimpleHTTPRequestHandler):
                     "Espèces"
                 )
             ).strip()[:30]
+
 
             with db() as conn:
 
@@ -670,11 +1039,14 @@ class App(SimpleHTTPRequestHandler):
                     (ride_id,)
                 ).fetchone()
 
+
             return self.sendj(
                 row,
                 201
             )
 
+
+        # CHAUFFEUR ACCEPTE COURSE
         if (
             path.startswith("/api/rides/")
             and path.endswith("/accept")
@@ -697,7 +1069,6 @@ class App(SimpleHTTPRequestHandler):
             ride_id = path.split("/")[3]
 
             with db() as conn:
-
                 cur = conn.execute(
                     """
                     UPDATE rides
@@ -717,10 +1088,7 @@ class App(SimpleHTTPRequestHandler):
                     )
                 )
 
-                changed = cur.rowcount
-
-            if not changed:
-
+            if not cur.rowcount:
                 return self.sendj(
                     {
                         "error":
@@ -729,8 +1097,12 @@ class App(SimpleHTTPRequestHandler):
                     409
                 )
 
-            return self.sendj({"ok": True})
+            return self.sendj({
+                "ok": True
+            })
 
+
+        # CHAUFFEUR TERMINE COURSE
         if (
             path.startswith("/api/rides/")
             and path.endswith("/complete")
@@ -753,7 +1125,6 @@ class App(SimpleHTTPRequestHandler):
             ride_id = path.split("/")[3]
 
             with db() as conn:
-
                 cur = conn.execute(
                     """
                     UPDATE rides
@@ -772,10 +1143,7 @@ class App(SimpleHTTPRequestHandler):
                     )
                 )
 
-                changed = cur.rowcount
-
-            if not changed:
-
+            if not cur.rowcount:
                 return self.sendj(
                     {
                         "error":
@@ -784,7 +1152,10 @@ class App(SimpleHTTPRequestHandler):
                     403
                 )
 
-            return self.sendj({"ok": True})
+            return self.sendj({
+                "ok": True
+            })
+
 
         return self.sendj(
             {"error": "Introuvable"},
