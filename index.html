@@ -1,39 +1,871 @@
 <!doctype html>
-<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SoninkaraGo</title>
+
 <style>
-body{margin:0;font-family:system-ui;background:#06110c;color:#fff}.w{max-width:900px;margin:auto;padding:20px}.hero,.card{background:#0d2017;border:1px solid #234433;border-radius:22px;padding:20px;margin-bottom:14px}h1{font-size:44px;line-height:.95;margin:8px 0}small,.sub{color:#9db2a3}label{display:block;margin:12px 0 5px;color:#9db2a3}input,select,button{width:100%;padding:13px;border-radius:12px;font:inherit}input,select{background:#07150f;color:#fff;border:1px solid #234433}button{background:#dcff59;border:0;font-weight:900;margin-top:12px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.row{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid #234433}.nav{display:flex;gap:8px;margin:12px 0}.nav button{width:auto;background:#173727;color:#fff}.nav button.on{background:#dcff59;color:#06110c}.hidden{display:none}@media(max-width:700px){.grid{grid-template-columns:1fr}}
-</style></head><body><div class="w">
-<div class="hero"><small>MOUDÉRY • BONDJI • DIAWARA • BAKEL</small><h1>SoninkaraGo</h1><p>Votre trajet, en toute confiance.</p></div>
-<div class="nav"><button class="on" data-p="client">Client</button><button data-p="driver">Chauffeur</button><button data-p="admin">Admin</button></div>
+body{
+  margin:0;
+  font-family:system-ui;
+  background:#06110c;
+  color:#fff;
+}
+.w{
+  max-width:900px;
+  margin:auto;
+  padding:20px;
+}
+.hero,.card{
+  background:#0d2017;
+  border:1px solid #234433;
+  border-radius:22px;
+  padding:20px;
+  margin-bottom:14px;
+}
+h1{
+  font-size:44px;
+  line-height:.95;
+  margin:8px 0;
+}
+small,.sub{
+  color:#9db2a3;
+}
+label{
+  display:block;
+  margin:12px 0 5px;
+  color:#9db2a3;
+}
+input,select,button{
+  width:100%;
+  padding:13px;
+  border-radius:12px;
+  font:inherit;
+  box-sizing:border-box;
+}
+input,select{
+  background:#07150f;
+  color:#fff;
+  border:1px solid #234433;
+}
+button{
+  background:#dcff59;
+  color:#06110c;
+  border:0;
+  font-weight:900;
+  margin-top:12px;
+}
+.grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:14px;
+}
+.row{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  padding:12px 0;
+  border-bottom:1px solid #234433;
+}
+.nav{
+  display:flex;
+  gap:8px;
+  margin:12px 0;
+}
+.nav button{
+  width:auto;
+  background:#173727;
+  color:#fff;
+}
+.nav button.on{
+  background:#dcff59;
+  color:#06110c;
+}
+.hidden{
+  display:none;
+}
+.logout{
+  background:#173727;
+  color:#fff;
+  width:auto;
+}
+.error{
+  color:#ff9d9d;
+  margin-top:10px;
+}
+.success{
+  color:#dcff59;
+  margin-top:10px;
+}
 
-<section id="client"><div class="grid"><div class="card"><h2>Commander</h2>
-<label>Nom</label><input id="name"><label>Téléphone</label><input id="phone" placeholder="+221 ...">
-<label>Départ</label><select id="pickup"><option>Moudéry</option><option>Bondji</option><option>Diawara</option><option>Bakel</option></select>
-<label>Destination</label><select id="dest"><option>Bondji</option><option>Diawara</option><option>Bakel</option><option>Moudéry</option></select>
-<label>Véhicule</label><select id="vehicle"><option value="auto">Auto-taxi</option><option value="moto">Moto-taxi</option></select>
-<label>Paiement</label><select id="payment"><option>Espèces</option><option>Wave</option><option>Orange Money</option></select>
-<h3 id="fare">1 000 F</h3><button id="order">Commander</button></div>
-<div class="card"><h2>Dernière course</h2><div id="status" class="sub">Aucune course.</div></div></div></section>
+@media(max-width:700px){
+  .grid{grid-template-columns:1fr}
+}
+</style>
+</head>
 
-<section id="driver" class="hidden"><div class="card"><h2>Espace chauffeur</h2><label>Nom chauffeur</label><input id="driverName"><div id="rides"></div></div></section>
-<section id="admin" class="hidden"><div class="card"><h2>Administration</h2><div id="stats"></div><div id="adminRides"></div></div></section>
+<body>
+<div class="w">
+
+<div class="hero">
+  <small>MOUDÉRY • BONDJI • DIAWARA • BAKEL</small>
+  <h1>SoninkaraGo</h1>
+  <p>Votre trajet, en toute confiance.</p>
 </div>
+
+<div class="nav">
+  <button class="on" data-p="client">Client</button>
+  <button data-p="driver">Chauffeur</button>
+  <button data-p="admin">Admin</button>
+</div>
+
+<section id="client">
+<div class="grid">
+
+<div class="card">
+<h2>Commander</h2>
+
+<label>Nom</label>
+<input id="name">
+
+<label>Téléphone</label>
+<input id="phone" placeholder="+221 ..." inputmode="tel">
+
+<label>Service</label>
+<select id="route">
+
+<optgroup label="Moto-taxi">
+<option value="moto_moudery_bondji">
+Moto-taxi — Moudéry → Bondji — 2 000 F
+</option>
+
+<option value="moto_bondji_moudery">
+Moto-taxi — Bondji → Moudéry — 2 000 F
+</option>
+
+<option value="moto_moudery_diawara">
+Moto-taxi — Moudéry → Diawara — 2 000 F
+</option>
+
+<option value="moto_diawara_moudery">
+Moto-taxi — Diawara → Moudéry — 2 000 F
+</option>
+
+<option value="moto_moudery_bakel">
+Moto-taxi — Moudéry → Bakel — 3 000 F
+</option>
+
+<option value="moto_bakel_moudery">
+Moto-taxi — Bakel → Moudéry — 3 000 F
+</option>
+
+<option value="moto_moudery_bakel_rt">
+Moto-taxi — Moudéry ↔ Bakel aller-retour — 6 000 F
+</option>
+
+<option value="moto_moudery_local">
+Moto-taxi — trajet dans Moudéry — 200 F
+</option>
+
+<option value="moto_bondji_local">
+Moto-taxi — trajet dans Bondji — 200 F
+</option>
+
+<option value="moto_diawara_local">
+Moto-taxi — trajet dans Diawara — 200 F
+</option>
+
+<option value="moto_bakel_local">
+Moto-taxi — trajet dans Bakel — 200 F
+</option>
+</optgroup>
+
+<optgroup label="3 roues">
+<option value="tricycle_moudery_local">
+3 roues — trajet dans Moudéry — 500 F
+</option>
+</optgroup>
+
+<optgroup label="Voiture taxi">
+<option value="car_moudery_bondji">
+Voiture taxi — Moudéry → Bondji — 2 500 F
+</option>
+
+<option value="car_bondji_moudery">
+Voiture taxi — Bondji → Moudéry — 2 500 F
+</option>
+
+<option value="car_moudery_diawara">
+Voiture taxi — Moudéry → Diawara — 2 500 F
+</option>
+
+<option value="car_diawara_moudery">
+Voiture taxi — Diawara → Moudéry — 2 500 F
+</option>
+
+<option value="car_moudery_bakel_rt">
+Voiture taxi — Moudéry ↔ Bakel aller-retour — 20 000 F
+</option>
+</optgroup>
+
+<optgroup label="Livraison">
+<option value="delivery_moudery_local">
+Livraison de matériel dans Moudéry — 1 000 F
+</option>
+</optgroup>
+
+</select>
+
+<label>Paiement</label>
+<select id="payment">
+<option>Espèces</option>
+<option>Wave</option>
+<option>Orange Money</option>
+</select>
+
+<h3 id="fare">2 000 F</h3>
+
+<button id="order">Commander</button>
+
+<div id="orderError" class="error"></div>
+<div id="orderSuccess" class="success"></div>
+</div>
+
+<div class="card">
+<h2>Dernière course</h2>
+<div id="status" class="sub">Aucune course.</div>
+</div>
+
+</div>
+</section>
+
+
+<section id="driver" class="hidden">
+
+<div id="driverLogin" class="card">
+<h2>Connexion chauffeur</h2>
+
+<label>Téléphone</label>
+<input id="driverPhone" inputmode="tel">
+
+<label>Code PIN</label>
+<input id="driverPin" type="password" inputmode="numeric">
+
+<button id="driverLoginBtn">Se connecter</button>
+
+<div id="driverLoginError" class="error"></div>
+</div>
+
+<div id="driverArea" class="card hidden">
+
+<h2>Espace chauffeur</h2>
+
+<p>
+Connecté :
+<b id="driverName"></b>
+</p>
+
+<button id="driverLogout" class="logout">
+Déconnexion
+</button>
+
+<div id="rides"></div>
+
+</div>
+</section>
+
+
+<section id="admin" class="hidden">
+
+<div id="adminLogin" class="card">
+<h2>Connexion administration</h2>
+
+<label>Mot de passe</label>
+<input id="adminPassword" type="password">
+
+<button id="adminLoginBtn">
+Se connecter
+</button>
+
+<div id="adminLoginError" class="error"></div>
+</div>
+
+<div id="adminArea" class="card hidden">
+
+<h2>Administration</h2>
+
+<button id="adminLogout" class="logout">
+Déconnexion
+</button>
+
+<div id="stats"></div>
+<div id="adminRides"></div>
+
+</div>
+</section>
+
+</div>
+
 <script>
-const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s),money=n=>new Intl.NumberFormat('fr-FR').format(n||0)+' F';
-const tariffs={'Moudéry|Bondji':1000,'Bondji|Moudéry':1000,'Moudéry|Diawara':2500,'Diawara|Moudéry':2500,'Moudéry|Bakel':5000,'Bakel|Moudéry':5000,'Bondji|Diawara':2000,'Diawara|Bondji':2000,'Bondji|Bakel':4500,'Bakel|Bondji':4500,'Diawara|Bakel':3500,'Bakel|Diawara':3500};
-let lastRide=null;
-function fare(){let f=tariffs[$('#pickup').value+'|'+$('#dest').value]||500;if($('#vehicle').value==='moto')f=Math.max(300,Math.round(f*.7/100)*100);$('#fare').textContent=money(f);return f}
-$('#pickup').onchange=fare;$('#dest').onchange=fare;$('#vehicle').onchange=fare;
-async function post(p,d){let r=await fetch('/api'+p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});return await r.json()}
-async function get(p){return await (await fetch('/api'+p)).json()}
-$('#order').onclick=async()=>{if($('#pickup').value===$('#dest').value)return alert('Choisissez une destination différente');let r=await post('/rides',{client_name:$('#name').value||'Client',phone:$('#phone').value,pickup:$('#pickup').value,destination:$('#dest').value,vehicle:$('#vehicle').value,payment:$('#payment').value,fare:fare()});lastRide=r.id;refresh()}
-async function refresh(){let rs=await get('/rides'),s=await get('/stats');$('#stats').innerHTML=`<b>${s.n}</b> courses • ${money(s.volume)} volume • ${money(s.fees)} commissions`;
-$('#rides').innerHTML=rs.filter(r=>r.status!=='completed').map(r=>`<div class="row"><div><b>${r.pickup} → ${r.destination}</b><div class="sub">${r.client_name} • ${r.status}</div></div><div><b>${money(r.fare-r.fee)}</b><br>${r.status==='searching'?`<button onclick="acceptRide('${r.id}')">Accepter</button>`:`<button onclick="completeRide('${r.id}')">Terminer</button>`}</div></div>`).join('')||'<p class="sub">Aucune course.</p>';
-$('#adminRides').innerHTML=rs.map(r=>`<div class="row"><div>${r.id} • ${r.pickup} → ${r.destination}</div><div>${money(r.fare)}<br><small>${r.status}</small></div></div>`).join('');
-if(lastRide){let r=rs.find(x=>x.id===lastRide);if(r)$('#status').innerHTML=`<b>${r.id}</b><br>${r.status}${r.driver_name?'<br>Chauffeur : '+r.driver_name:''}<br>${money(r.fare)}`}}
-async function acceptRide(id){let n=$('#driverName').value.trim();if(!n)return alert('Entre le nom du chauffeur');await post('/rides/'+id+'/accept',{driver_name:n});refresh()}
-async function completeRide(id){await post('/rides/'+id+'/complete',{});refresh()}
-$$('.nav button').forEach(b=>b.onclick=()=>{$$('.nav button').forEach(x=>x.classList.remove('on'));b.classList.add('on');['client','driver','admin'].forEach(p=>$('#'+p).classList.toggle('hidden',p!==b.dataset.p));refresh()});
-fare();refresh();setInterval(refresh,4000);
-</script></body></html>
+
+const $=s=>document.querySelector(s);
+const $$=s=>document.querySelectorAll(s);
+
+const money=n=>
+new Intl.NumberFormat('fr-FR').format(n||0)+' F';
+
+const prices={
+moto_moudery_bondji:2000,
+moto_bondji_moudery:2000,
+moto_moudery_diawara:2000,
+moto_diawara_moudery:2000,
+moto_moudery_bakel:3000,
+moto_bakel_moudery:3000,
+moto_moudery_bakel_rt:6000,
+
+moto_moudery_local:200,
+moto_bondji_local:200,
+moto_diawara_local:200,
+moto_bakel_local:200,
+
+tricycle_moudery_local:500,
+
+car_moudery_bondji:2500,
+car_bondji_moudery:2500,
+car_moudery_diawara:2500,
+car_diawara_moudery:2500,
+car_moudery_bakel_rt:20000,
+
+delivery_moudery_local:1000
+};
+
+let lastRide=localStorage.getItem('lastRide')||null;
+
+let driverToken=
+sessionStorage.getItem('driverToken')||'';
+
+let adminToken=
+sessionStorage.getItem('adminToken')||'';
+
+let currentDriver=
+sessionStorage.getItem('driverName')||'';
+
+
+function esc(v){
+return String(v??'')
+.replaceAll('&','&amp;')
+.replaceAll('<','&lt;')
+.replaceAll('>','&gt;')
+.replaceAll('"','&quot;')
+.replaceAll("'","&#039;");
+}
+
+
+function updateFare(){
+const code=$('#route').value;
+$('#fare').textContent=money(prices[code]||0);
+}
+
+$('#route').onchange=updateFare;
+
+
+async function request(path,options={}){
+
+const r=await fetch('/api'+path,options);
+
+let data={};
+
+try{
+data=await r.json();
+}catch(e){}
+
+if(!r.ok)
+throw new Error(
+data.error||
+'Une erreur est survenue'
+);
+
+return data;
+}
+
+
+async function post(path,data,token=''){
+
+const headers={
+'Content-Type':'application/json'
+};
+
+if(token)
+headers.Authorization='Bearer '+token;
+
+return request(
+path,
+{
+method:'POST',
+headers,
+body:JSON.stringify(data)
+}
+);
+}
+
+
+async function get(path,token=''){
+
+const headers={};
+
+if(token)
+headers.Authorization='Bearer '+token;
+
+return request(
+path,
+{headers}
+);
+}
+
+
+$('#order').onclick=async()=>{
+
+$('#orderError').textContent='';
+$('#orderSuccess').textContent='';
+
+try{
+
+const r=await post(
+'/rides',
+{
+client_name:
+$('#name').value.trim()||'Client',
+
+phone:
+$('#phone').value.trim(),
+
+route_code:
+$('#route').value,
+
+payment:
+$('#payment').value
+}
+);
+
+lastRide=r.id;
+
+localStorage.setItem(
+'lastRide',
+lastRide
+);
+
+$('#orderSuccess').textContent=
+'Commande envoyée avec succès.';
+
+await refreshClient();
+
+}catch(e){
+
+$('#orderError').textContent=e.message;
+
+}
+};
+
+
+async function refreshClient(){
+
+if(!lastRide)
+return;
+
+try{
+
+const r=await get(
+'/rides/'+
+encodeURIComponent(lastRide)
+);
+
+let label=r.status;
+
+if(r.status==='searching')
+label='Recherche d’un chauffeur';
+
+if(r.status==='accepted')
+label='Course acceptée';
+
+if(r.status==='completed')
+label='Course terminée';
+
+$('#status').innerHTML=
+`<b>${esc(r.id)}</b><br>`+
+`${esc(r.pickup)} → ${esc(r.destination)}<br>`+
+`${esc(label)}`+
+(
+r.driver_name
+?'<br>Chauffeur : '+esc(r.driver_name)
+:''
+)+
+`<br><b>${money(r.fare)}</b>`;
+
+}catch(e){}
+}
+
+
+async function refreshDriver(){
+
+if(!driverToken)
+return;
+
+try{
+
+const rs=
+await get(
+'/rides',
+driverToken
+);
+
+$('#rides').innerHTML=
+rs.map(r=>`
+
+<div class="row">
+
+<div>
+<b>
+${esc(r.pickup)}
+→
+${esc(r.destination)}
+</b>
+
+<div class="sub">
+${esc(r.client_name)}
+•
+${esc(r.vehicle)}
+•
+${esc(r.status)}
+</div>
+</div>
+
+<div>
+
+<b>
+${money(r.fare-r.fee)}
+</b>
+
+<br>
+
+${
+r.status==='searching'
+?
+`<button onclick="acceptRide('${esc(r.id)}')">
+Accepter
+</button>`
+:
+`<button onclick="completeRide('${esc(r.id)}')">
+Terminer
+</button>`
+}
+
+</div>
+
+</div>
+
+`).join('')
+||
+'<p class="sub">Aucune course.</p>';
+
+}catch(e){
+
+driverLogout();
+
+}
+}
+
+
+async function refreshAdmin(){
+
+if(!adminToken)
+return;
+
+try{
+
+const [rs,s]=await Promise.all([
+get('/rides',adminToken),
+get('/stats',adminToken)
+]);
+
+$('#stats').innerHTML=
+`<p>
+<b>${s.n}</b> courses •
+${money(s.volume)} volume •
+${money(s.fees)} commissions
+</p>`;
+
+$('#adminRides').innerHTML=
+rs.map(r=>`
+
+<div class="row">
+
+<div>
+<b>${esc(r.id)}</b><br>
+${esc(r.pickup)}
+→
+${esc(r.destination)}<br>
+<small>
+${esc(r.vehicle)}
+•
+${esc(r.client_name)}
+</small>
+</div>
+
+<div>
+${money(r.fare)}
+<br>
+<small>
+${esc(r.status)}
+</small>
+</div>
+
+</div>
+
+`).join('');
+
+}catch(e){
+
+adminLogout();
+
+}
+}
+
+
+$('#driverLoginBtn').onclick=
+async()=>{
+
+$('#driverLoginError').textContent='';
+
+try{
+
+const r=await post(
+'/login/driver',
+{
+phone:
+$('#driverPhone').value.trim(),
+
+pin:
+$('#driverPin').value.trim()
+}
+);
+
+driverToken=r.token;
+currentDriver=r.name;
+
+sessionStorage.setItem(
+'driverToken',
+driverToken
+);
+
+sessionStorage.setItem(
+'driverName',
+currentDriver
+);
+
+showDriverArea();
+
+refreshDriver();
+
+}catch(e){
+
+$('#driverLoginError').textContent=e.message;
+
+}
+};
+
+
+function showDriverArea(){
+
+$('#driverLogin').classList.add('hidden');
+
+$('#driverArea').classList.remove('hidden');
+
+$('#driverName').textContent=currentDriver;
+
+}
+
+
+function driverLogout(){
+
+driverToken='';
+currentDriver='';
+
+sessionStorage.removeItem('driverToken');
+sessionStorage.removeItem('driverName');
+
+$('#driverArea').classList.add('hidden');
+
+$('#driverLogin').classList.remove('hidden');
+
+}
+
+
+$('#driverLogout').onclick=driverLogout;
+
+
+async function acceptRide(id){
+
+try{
+
+await post(
+'/rides/'+encodeURIComponent(id)+'/accept',
+{},
+driverToken
+);
+
+refreshDriver();
+
+}catch(e){
+
+alert(e.message);
+refreshDriver();
+
+}
+}
+
+
+async function completeRide(id){
+
+try{
+
+await post(
+'/rides/'+encodeURIComponent(id)+'/complete',
+{},
+driverToken
+);
+
+refreshDriver();
+
+}catch(e){
+
+alert(e.message);
+refreshDriver();
+
+}
+}
+
+
+$('#adminLoginBtn').onclick=
+async()=>{
+
+$('#adminLoginError').textContent='';
+
+try{
+
+const r=await post(
+'/login/admin',
+{
+password:
+$('#adminPassword').value
+}
+);
+
+adminToken=r.token;
+
+sessionStorage.setItem(
+'adminToken',
+adminToken
+);
+
+showAdminArea();
+
+refreshAdmin();
+
+}catch(e){
+
+$('#adminLoginError').textContent=e.message;
+
+}
+};
+
+
+function showAdminArea(){
+
+$('#adminLogin').classList.add('hidden');
+
+$('#adminArea').classList.remove('hidden');
+
+}
+
+
+function adminLogout(){
+
+adminToken='';
+
+sessionStorage.removeItem('adminToken');
+
+$('#adminArea').classList.add('hidden');
+
+$('#adminLogin').classList.remove('hidden');
+
+}
+
+
+$('#adminLogout').onclick=adminLogout;
+
+
+$$('.nav button').forEach(
+b=>b.onclick=()=>{
+
+$$('.nav button')
+.forEach(
+x=>x.classList.remove('on')
+);
+
+b.classList.add('on');
+
+[
+'client',
+'driver',
+'admin'
+].forEach(
+p=>
+$('#'+p)
+.classList.toggle(
+'hidden',
+p!==b.dataset.p
+)
+);
+
+if(
+b.dataset.p==='driver'
+&& driverToken
+)
+refreshDriver();
+
+if(
+b.dataset.p==='admin'
+&& adminToken
+)
+refreshAdmin();
+
+}
+);
+
+
+if(driverToken)
+showDriverArea();
+
+if(adminToken)
+showAdminArea();
+
+updateFare();
+refreshClient();
+
+setInterval(
+()=>{
+refreshClient();
+
+if(driverToken)
+refreshDriver();
+
+if(adminToken)
+refreshAdmin();
+},
+5000
+);
+
+</script>
+</body>
+</html>
