@@ -55,6 +55,7 @@ button{
   border:0;
   font-weight:900;
   margin-top:12px;
+  cursor:pointer;
 }
 .grid{
   display:grid;
@@ -90,6 +91,17 @@ button{
   color:#fff;
   width:auto;
 }
+.secondary{
+  background:#173727;
+  color:#fff;
+}
+.approve{
+  background:#dcff59;
+}
+.reject{
+  background:#7a2929;
+  color:#fff;
+}
 .error{
   color:#ff9d9d;
   margin-top:10px;
@@ -97,6 +109,15 @@ button{
 .success{
   color:#dcff59;
   margin-top:10px;
+}
+.statusPending{
+  color:#ffd66b;
+}
+.statusApproved{
+  color:#dcff59;
+}
+.statusRejected{
+  color:#ff9d9d;
 }
 
 @media(max-width:700px){
@@ -136,83 +157,33 @@ button{
 <select id="route">
 
 <optgroup label="Moto-taxi">
-<option value="moto_moudery_bondji">
-Moto-taxi — Moudéry → Bondji — 2 000 F
-</option>
-
-<option value="moto_bondji_moudery">
-Moto-taxi — Bondji → Moudéry — 2 000 F
-</option>
-
-<option value="moto_moudery_diawara">
-Moto-taxi — Moudéry → Diawara — 2 000 F
-</option>
-
-<option value="moto_diawara_moudery">
-Moto-taxi — Diawara → Moudéry — 2 000 F
-</option>
-
-<option value="moto_moudery_bakel">
-Moto-taxi — Moudéry → Bakel — 3 000 F
-</option>
-
-<option value="moto_bakel_moudery">
-Moto-taxi — Bakel → Moudéry — 3 000 F
-</option>
-
-<option value="moto_moudery_bakel_rt">
-Moto-taxi — Moudéry ↔ Bakel aller-retour — 6 000 F
-</option>
-
-<option value="moto_moudery_local">
-Moto-taxi — trajet dans Moudéry — 200 F
-</option>
-
-<option value="moto_bondji_local">
-Moto-taxi — trajet dans Bondji — 200 F
-</option>
-
-<option value="moto_diawara_local">
-Moto-taxi — trajet dans Diawara — 200 F
-</option>
-
-<option value="moto_bakel_local">
-Moto-taxi — trajet dans Bakel — 200 F
-</option>
+<option value="moto_moudery_bondji">Moto-taxi — Moudéry → Bondji — 2 000 F</option>
+<option value="moto_bondji_moudery">Moto-taxi — Bondji → Moudéry — 2 000 F</option>
+<option value="moto_moudery_diawara">Moto-taxi — Moudéry → Diawara — 2 000 F</option>
+<option value="moto_diawara_moudery">Moto-taxi — Diawara → Moudéry — 2 000 F</option>
+<option value="moto_moudery_bakel">Moto-taxi — Moudéry → Bakel — 3 000 F</option>
+<option value="moto_bakel_moudery">Moto-taxi — Bakel → Moudéry — 3 000 F</option>
+<option value="moto_moudery_bakel_rt">Moto-taxi — Moudéry ↔ Bakel aller-retour — 6 000 F</option>
+<option value="moto_moudery_local">Moto-taxi — trajet dans Moudéry — 200 F</option>
+<option value="moto_bondji_local">Moto-taxi — trajet dans Bondji — 200 F</option>
+<option value="moto_diawara_local">Moto-taxi — trajet dans Diawara — 200 F</option>
+<option value="moto_bakel_local">Moto-taxi — trajet dans Bakel — 200 F</option>
 </optgroup>
 
 <optgroup label="3 roues">
-<option value="tricycle_moudery_local">
-3 roues — trajet dans Moudéry — 500 F
-</option>
+<option value="tricycle_moudery_local">3 roues — trajet dans Moudéry — 500 F</option>
 </optgroup>
 
 <optgroup label="Voiture taxi">
-<option value="car_moudery_bondji">
-Voiture taxi — Moudéry → Bondji — 2 500 F
-</option>
-
-<option value="car_bondji_moudery">
-Voiture taxi — Bondji → Moudéry — 2 500 F
-</option>
-
-<option value="car_moudery_diawara">
-Voiture taxi — Moudéry → Diawara — 2 500 F
-</option>
-
-<option value="car_diawara_moudery">
-Voiture taxi — Diawara → Moudéry — 2 500 F
-</option>
-
-<option value="car_moudery_bakel_rt">
-Voiture taxi — Moudéry ↔ Bakel aller-retour — 20 000 F
-</option>
+<option value="car_moudery_bondji">Voiture taxi — Moudéry → Bondji — 2 500 F</option>
+<option value="car_bondji_moudery">Voiture taxi — Bondji → Moudéry — 2 500 F</option>
+<option value="car_moudery_diawara">Voiture taxi — Moudéry → Diawara — 2 500 F</option>
+<option value="car_diawara_moudery">Voiture taxi — Diawara → Moudéry — 2 500 F</option>
+<option value="car_moudery_bakel_rt">Voiture taxi — Moudéry ↔ Bakel aller-retour — 20 000 F</option>
 </optgroup>
 
 <optgroup label="Livraison">
-<option value="delivery_moudery_local">
-Livraison de matériel dans Moudéry — 1 000 F
-</option>
+<option value="delivery_moudery_local">Livraison de matériel dans Moudéry — 1 000 F</option>
 </optgroup>
 
 </select>
@@ -254,8 +225,56 @@ Livraison de matériel dans Moudéry — 1 000 F
 
 <button id="driverLoginBtn">Se connecter</button>
 
+<button id="showRegisterBtn" class="secondary">
+S'inscrire comme chauffeur
+</button>
+
 <div id="driverLoginError" class="error"></div>
 </div>
+
+
+<div id="driverRegister" class="card hidden">
+<h2>Inscription chauffeur</h2>
+
+<label>Nom et prénom</label>
+<input id="registerName">
+
+<label>Téléphone</label>
+<input id="registerPhone" inputmode="tel">
+
+<label>Village / zone</label>
+<select id="registerVillage">
+<option>Moudéry</option>
+<option>Bondji</option>
+<option>Diawara</option>
+<option>Bakel</option>
+</select>
+
+<label>Type de véhicule</label>
+<select id="registerVehicle">
+<option>Moto-taxi</option>
+<option>3 roues</option>
+<option>Voiture taxi</option>
+</select>
+
+<label>Choisissez un code PIN</label>
+<input id="registerPin" type="password" inputmode="numeric" maxlength="6">
+
+<label>Confirmez le code PIN</label>
+<input id="registerPin2" type="password" inputmode="numeric" maxlength="6">
+
+<button id="registerDriverBtn">
+Envoyer mon inscription
+</button>
+
+<button id="backLoginBtn" class="secondary">
+Retour à la connexion
+</button>
+
+<div id="registerError" class="error"></div>
+<div id="registerSuccess" class="success"></div>
+</div>
+
 
 <div id="driverArea" class="card hidden">
 
@@ -291,7 +310,10 @@ Se connecter
 <div id="adminLoginError" class="error"></div>
 </div>
 
-<div id="adminArea" class="card hidden">
+
+<div id="adminArea" class="hidden">
+
+<div class="card">
 
 <h2>Administration</h2>
 
@@ -300,7 +322,24 @@ Déconnexion
 </button>
 
 <div id="stats"></div>
+
+</div>
+
+<div class="card">
+
+<h2>Demandes chauffeurs</h2>
+
+<div id="adminDrivers"></div>
+
+</div>
+
+<div class="card">
+
+<h2>Courses</h2>
+
 <div id="adminRides"></div>
+
+</div>
 
 </div>
 </section>
@@ -323,33 +362,23 @@ moto_diawara_moudery:2000,
 moto_moudery_bakel:3000,
 moto_bakel_moudery:3000,
 moto_moudery_bakel_rt:6000,
-
 moto_moudery_local:200,
 moto_bondji_local:200,
 moto_diawara_local:200,
 moto_bakel_local:200,
-
 tricycle_moudery_local:500,
-
 car_moudery_bondji:2500,
 car_bondji_moudery:2500,
 car_moudery_diawara:2500,
 car_diawara_moudery:2500,
 car_moudery_bakel_rt:20000,
-
 delivery_moudery_local:1000
 };
 
 let lastRide=localStorage.getItem('lastRide')||null;
-
-let driverToken=
-sessionStorage.getItem('driverToken')||'';
-
-let adminToken=
-sessionStorage.getItem('adminToken')||'';
-
-let currentDriver=
-sessionStorage.getItem('driverName')||'';
+let driverToken=sessionStorage.getItem('driverToken')||'';
+let adminToken=sessionStorage.getItem('adminToken')||'';
+let currentDriver=sessionStorage.getItem('driverName')||'';
 
 
 function esc(v){
@@ -380,11 +409,9 @@ try{
 data=await r.json();
 }catch(e){}
 
-if(!r.ok)
-throw new Error(
-data.error||
-'Une erreur est survenue'
-);
+if(!r.ok){
+throw new Error(data.error||'Une erreur est survenue');
+}
 
 return data;
 }
@@ -396,8 +423,9 @@ const headers={
 'Content-Type':'application/json'
 };
 
-if(token)
+if(token){
 headers.Authorization='Bearer '+token;
+}
 
 return request(
 path,
@@ -414,8 +442,9 @@ async function get(path,token=''){
 
 const headers={};
 
-if(token)
+if(token){
 headers.Authorization='Bearer '+token;
+}
 
 return request(
 path,
@@ -423,6 +452,8 @@ path,
 );
 }
 
+
+/* CLIENT */
 
 $('#order').onclick=async()=>{
 
@@ -434,17 +465,10 @@ try{
 const r=await post(
 '/rides',
 {
-client_name:
-$('#name').value.trim()||'Client',
-
-phone:
-$('#phone').value.trim(),
-
-route_code:
-$('#route').value,
-
-payment:
-$('#payment').value
+client_name:$('#name').value.trim()||'Client',
+phone:$('#phone').value.trim(),
+route_code:$('#route').value,
+payment:$('#payment').value
 }
 );
 
@@ -470,26 +494,29 @@ $('#orderError').textContent=e.message;
 
 async function refreshClient(){
 
-if(!lastRide)
+if(!lastRide){
 return;
+}
 
 try{
 
 const r=await get(
-'/rides/'+
-encodeURIComponent(lastRide)
+'/rides/'+encodeURIComponent(lastRide)
 );
 
 let label=r.status;
 
-if(r.status==='searching')
+if(r.status==='searching'){
 label='Recherche d’un chauffeur';
+}
 
-if(r.status==='accepted')
+if(r.status==='accepted'){
 label='Course acceptée';
+}
 
-if(r.status==='completed')
+if(r.status==='completed'){
 label='Course terminée';
+}
 
 $('#status').innerHTML=
 `<b>${esc(r.id)}</b><br>`+
@@ -506,15 +533,147 @@ r.driver_name
 }
 
 
-async function refreshDriver(){
+/* INSCRIPTION CHAUFFEUR */
 
-if(!driverToken)
+$('#showRegisterBtn').onclick=()=>{
+
+$('#driverLogin').classList.add('hidden');
+$('#driverRegister').classList.remove('hidden');
+
+$('#registerError').textContent='';
+$('#registerSuccess').textContent='';
+
+};
+
+
+$('#backLoginBtn').onclick=()=>{
+
+$('#driverRegister').classList.add('hidden');
+$('#driverLogin').classList.remove('hidden');
+
+};
+
+
+$('#registerDriverBtn').onclick=async()=>{
+
+$('#registerError').textContent='';
+$('#registerSuccess').textContent='';
+
+const pin=$('#registerPin').value.trim();
+const pin2=$('#registerPin2').value.trim();
+
+if(pin!==pin2){
+
+$('#registerError').textContent=
+'Les deux codes PIN ne correspondent pas.';
+
 return;
+}
 
 try{
 
-const rs=
-await get(
+const r=await post(
+'/register/driver',
+{
+name:$('#registerName').value.trim(),
+phone:$('#registerPhone').value.trim(),
+village:$('#registerVillage').value,
+vehicle:$('#registerVehicle').value,
+pin
+}
+);
+
+$('#registerSuccess').textContent=
+r.message||
+'Inscription envoyée. En attente de validation.';
+
+$('#registerDriverBtn').disabled=true;
+
+}catch(e){
+
+$('#registerError').textContent=e.message;
+
+}
+};
+
+
+/* CONNEXION CHAUFFEUR */
+
+$('#driverLoginBtn').onclick=async()=>{
+
+$('#driverLoginError').textContent='';
+
+try{
+
+const r=await post(
+'/login/driver',
+{
+phone:$('#driverPhone').value.trim(),
+pin:$('#driverPin').value.trim()
+}
+);
+
+driverToken=r.token;
+currentDriver=r.name;
+
+sessionStorage.setItem(
+'driverToken',
+driverToken
+);
+
+sessionStorage.setItem(
+'driverName',
+currentDriver
+);
+
+showDriverArea();
+refreshDriver();
+
+}catch(e){
+
+$('#driverLoginError').textContent=e.message;
+
+}
+};
+
+
+function showDriverArea(){
+
+$('#driverLogin').classList.add('hidden');
+$('#driverRegister').classList.add('hidden');
+$('#driverArea').classList.remove('hidden');
+
+$('#driverName').textContent=currentDriver;
+
+}
+
+
+function driverLogout(){
+
+driverToken='';
+currentDriver='';
+
+sessionStorage.removeItem('driverToken');
+sessionStorage.removeItem('driverName');
+
+$('#driverArea').classList.add('hidden');
+$('#driverLogin').classList.remove('hidden');
+
+}
+
+
+$('#driverLogout').onclick=driverLogout;
+
+
+async function refreshDriver(){
+
+if(!driverToken){
+return;
+}
+
+try{
+
+const rs=await get(
 '/rides',
 driverToken
 );
@@ -576,134 +735,6 @@ driverLogout();
 }
 
 
-async function refreshAdmin(){
-
-if(!adminToken)
-return;
-
-try{
-
-const [rs,s]=await Promise.all([
-get('/rides',adminToken),
-get('/stats',adminToken)
-]);
-
-$('#stats').innerHTML=
-`<p>
-<b>${s.n}</b> courses •
-${money(s.volume)} volume •
-${money(s.fees)} commissions
-</p>`;
-
-$('#adminRides').innerHTML=
-rs.map(r=>`
-
-<div class="row">
-
-<div>
-<b>${esc(r.id)}</b><br>
-${esc(r.pickup)}
-→
-${esc(r.destination)}<br>
-<small>
-${esc(r.vehicle)}
-•
-${esc(r.client_name)}
-</small>
-</div>
-
-<div>
-${money(r.fare)}
-<br>
-<small>
-${esc(r.status)}
-</small>
-</div>
-
-</div>
-
-`).join('');
-
-}catch(e){
-
-adminLogout();
-
-}
-}
-
-
-$('#driverLoginBtn').onclick=
-async()=>{
-
-$('#driverLoginError').textContent='';
-
-try{
-
-const r=await post(
-'/login/driver',
-{
-phone:
-$('#driverPhone').value.trim(),
-
-pin:
-$('#driverPin').value.trim()
-}
-);
-
-driverToken=r.token;
-currentDriver=r.name;
-
-sessionStorage.setItem(
-'driverToken',
-driverToken
-);
-
-sessionStorage.setItem(
-'driverName',
-currentDriver
-);
-
-showDriverArea();
-
-refreshDriver();
-
-}catch(e){
-
-$('#driverLoginError').textContent=e.message;
-
-}
-};
-
-
-function showDriverArea(){
-
-$('#driverLogin').classList.add('hidden');
-
-$('#driverArea').classList.remove('hidden');
-
-$('#driverName').textContent=currentDriver;
-
-}
-
-
-function driverLogout(){
-
-driverToken='';
-currentDriver='';
-
-sessionStorage.removeItem('driverToken');
-sessionStorage.removeItem('driverName');
-
-$('#driverArea').classList.add('hidden');
-
-$('#driverLogin').classList.remove('hidden');
-
-}
-
-
-$('#driverLogout').onclick=driverLogout;
-
-
 async function acceptRide(id){
 
 try{
@@ -719,7 +750,6 @@ refreshDriver();
 }catch(e){
 
 alert(e.message);
-refreshDriver();
 
 }
 }
@@ -740,14 +770,14 @@ refreshDriver();
 }catch(e){
 
 alert(e.message);
-refreshDriver();
 
 }
 }
 
 
-$('#adminLoginBtn').onclick=
-async()=>{
+/* ADMIN */
+
+$('#adminLoginBtn').onclick=async()=>{
 
 $('#adminLoginError').textContent='';
 
@@ -756,8 +786,7 @@ try{
 const r=await post(
 '/login/admin',
 {
-password:
-$('#adminPassword').value
+password:$('#adminPassword').value
 }
 );
 
@@ -769,7 +798,6 @@ adminToken
 );
 
 showAdminArea();
-
 refreshAdmin();
 
 }catch(e){
@@ -783,7 +811,6 @@ $('#adminLoginError').textContent=e.message;
 function showAdminArea(){
 
 $('#adminLogin').classList.add('hidden');
-
 $('#adminArea').classList.remove('hidden');
 
 }
@@ -796,7 +823,6 @@ adminToken='';
 sessionStorage.removeItem('adminToken');
 
 $('#adminArea').classList.add('hidden');
-
 $('#adminLogin').classList.remove('hidden');
 
 }
@@ -804,6 +830,183 @@ $('#adminLogin').classList.remove('hidden');
 
 $('#adminLogout').onclick=adminLogout;
 
+
+async function refreshAdmin(){
+
+if(!adminToken){
+return;
+}
+
+try{
+
+const [rs,s,drivers]=await Promise.all([
+get('/rides',adminToken),
+get('/stats',adminToken),
+get('/admin/drivers',adminToken)
+]);
+
+$('#stats').innerHTML=
+`<p>
+<b>${s.n}</b> courses •
+${money(s.volume)} volume •
+${money(s.fees)} commissions
+</p>`;
+
+
+$('#adminDrivers').innerHTML=
+drivers.map(d=>{
+
+let statusClass='statusPending';
+let statusLabel='En attente';
+
+if(d.status==='approved'){
+statusClass='statusApproved';
+statusLabel='Accepté';
+}
+
+if(d.status==='rejected'){
+statusClass='statusRejected';
+statusLabel='Refusé';
+}
+
+return `
+
+<div class="row">
+
+<div>
+
+<b>${esc(d.name)}</b>
+
+<div class="sub">
+${esc(d.phone)}<br>
+${esc(d.village)} • ${esc(d.vehicle)}
+</div>
+
+<div class="${statusClass}">
+${statusLabel}
+</div>
+
+</div>
+
+<div>
+
+${
+d.status==='pending'
+?
+`
+<button class="approve"
+onclick="approveDriver('${esc(d.id)}')">
+Accepter
+</button>
+
+<button class="reject"
+onclick="rejectDriver('${esc(d.id)}')">
+Refuser
+</button>
+`
+:
+''
+}
+
+</div>
+
+</div>
+
+`;
+
+}).join('')
+||
+'<p class="sub">Aucune demande chauffeur.</p>';
+
+
+$('#adminRides').innerHTML=
+rs.map(r=>`
+
+<div class="row">
+
+<div>
+
+<b>${esc(r.id)}</b><br>
+
+${esc(r.pickup)}
+→
+${esc(r.destination)}
+
+<br>
+
+<small>
+${esc(r.vehicle)}
+•
+${esc(r.client_name)}
+</small>
+
+</div>
+
+<div>
+
+${money(r.fare)}
+
+<br>
+
+<small>
+${esc(r.status)}
+</small>
+
+</div>
+
+</div>
+
+`).join('');
+
+}catch(e){
+
+adminLogout();
+
+}
+}
+
+
+async function approveDriver(id){
+
+try{
+
+await post(
+'/admin/drivers/'+encodeURIComponent(id)+'/approve',
+{},
+adminToken
+);
+
+refreshAdmin();
+
+}catch(e){
+
+alert(e.message);
+
+}
+}
+
+
+async function rejectDriver(id){
+
+try{
+
+await post(
+'/admin/drivers/'+encodeURIComponent(id)+'/reject',
+{},
+adminToken
+);
+
+refreshAdmin();
+
+}catch(e){
+
+alert(e.message);
+
+}
+}
+
+
+/* NAVIGATION */
 
 $$('.nav button').forEach(
 b=>b.onclick=()=>{
@@ -831,41 +1034,50 @@ p!==b.dataset.p
 if(
 b.dataset.p==='driver'
 && driverToken
-)
+){
 refreshDriver();
+}
 
 if(
 b.dataset.p==='admin'
 && adminToken
-)
+){
 refreshAdmin();
+}
 
 }
 );
 
 
-if(driverToken)
+if(driverToken){
 showDriverArea();
+}
 
-if(adminToken)
+if(adminToken){
 showAdminArea();
+}
 
 updateFare();
 refreshClient();
 
 setInterval(
 ()=>{
+
 refreshClient();
 
-if(driverToken)
+if(driverToken){
 refreshDriver();
+}
 
-if(adminToken)
+if(adminToken){
 refreshAdmin();
+}
+
 },
 5000
 );
 
 </script>
+
 </body>
 </html>
