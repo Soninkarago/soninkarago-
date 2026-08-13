@@ -431,7 +431,48 @@ Déconnexion
 
 const $=s=>document.querySelector(s);
 const $$=s=>document.querySelectorAll(s);
+/* NAVIGATION CLIENT / CHAUFFEUR / ADMIN */
 
+function openPage(page){
+
+  ['client','driver','admin'].forEach(id=>{
+    const section = document.getElementById(id);
+
+    if(section){
+      section.classList.toggle('hidden', id !== page);
+    }
+  });
+
+  document.querySelectorAll('.nav button').forEach(btn=>{
+    btn.classList.toggle(
+      'on',
+      btn.dataset.p === page
+    );
+  });
+
+}
+
+
+/* clic sur les boutons */
+
+document.querySelectorAll('.nav button').forEach(btn=>{
+
+  btn.addEventListener('click',()=>{
+
+    const page = btn.dataset.p;
+
+    if(page){
+      openPage(page);
+    }
+
+  });
+
+});
+
+
+/* page affichée au démarrage */
+
+openPage('client');
 const money=n=>
 new Intl.NumberFormat('fr-FR').format(n||0)+' F';
 
