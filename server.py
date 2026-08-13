@@ -181,7 +181,8 @@ def init():
                 driver_name TEXT,
                 created_at BIGINT
             )
-        """)        conn.execute("""
+        """) 
+        conn.execute("""
             ALTER TABLE rides
             ADD COLUMN IF NOT EXISTS driver_id TEXT
         """)
