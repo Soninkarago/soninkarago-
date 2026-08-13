@@ -1188,8 +1188,6 @@ async function sendClientLocation(lat,lng){
         );
     }
 }
-
-
 async function refreshDriverPositionForClient(){
 
     if(!lastRide || !trackingToken){
@@ -1205,66 +1203,90 @@ async function refreshDriverPositionForClient(){
             encodeURIComponent(trackingToken)
         );
 
+        console.log('TRACKING CLIENT', r);
+
         if(
-            r.driver_lat != null &&
-            r.driver_lng != null
+            r.driver_lat !== null &&
+            r.driver_lat !== undefined &&
+            r.driver_lng !== null &&
+            r.driver_lng !== undefined
         ){
 
-            const pos = [
-                Number(r.driver_lat),
-                Number(r.driver_lng)
-            ];
+            const lat = Number(r.driver_lat);
+            const lng = Number(r.driver_lng);
+
+            if(!clientMap){
+                return;
+            }
 
             if(!clientDriverMarker){
 
-                clientDriverMarker =
-                L.marker(pos)
-                .addTo(clientMap);
+                clientDriverMarker = L.marker(
+                    [lat,lng]
+                ).addTo(clientMap);
 
                 clientDriverMarker.bindPopup(
-                    '🚕 ' +
-                    (
-                        r.driver_name ||
-                        'Chauffeur'
-                    )
+                    '🚕 ' + (r.driver_name || 'Chauffeur')
+                );
+
+            }else{
+
+                clientDriverMarker.setLatLng(
+                    [lat,lng]
                 );
             }
-            else{
 
-                clientDriverMarker.setLatLng(pos);
+            const points = [];
+
+            if(clientSelfMarker){
+                points.push(
+                    clientSelfMarker.getLatLng()
+                );
+            }
+
+            if(clientDriverMarker){
+                points.push(
+                    clientDriverMarker.getLatLng()
+                );
+            }
+
+            if(points.length === 2){
+                clientMap.fitBounds(
+                    L.latLngBounds(points),
+                    {
+                        padding:[40,40],
+                        maxZoom:16
+                    }
+                );
             }
 
             $('#clientGpsInfo').innerHTML =
-            '<span class="gpsActive">🚕 Chauffeur localisé</span>';
+                '<span class="gpsActive">🚕 Chauffeur localisé</span>';
 
-        }
-        else if(r.status === 'accepted'){
-
-            $('#clientGpsInfo').textContent =
-            'Course acceptée. En attente de la position du chauffeur…';
-        }
-        else{
+        }else if(r.status === 'accepted'){
 
             $('#clientGpsInfo').textContent =
-            'Recherche d’un chauffeur…';
-        }
+                'Le chauffeur arrive. En attente de sa position GPS…';
 
-        if(r.status === 'completed'){
+        }else{
 
             $('#clientGpsInfo').textContent =
-            'Course terminée. Suivi GPS arrêté.';
-
-            stopClientGps();
+                'Recherche d’un chauffeur…';
         }
 
     }catch(e){
 
         console.log(
-            'Suivi chauffeur:',
-            e.message
+            'Erreur suivi chauffeur client:',
+            e
         );
+
+        $('#clientGpsInfo').textContent =
+            'Actualisation de la position du chauffeur…';
     }
 }
+
+
 
 
 function startClientGps(){
