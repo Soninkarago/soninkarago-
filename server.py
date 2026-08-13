@@ -7,7 +7,7 @@ import hmac
 import hashlib
 import base64
 import secrets
-
+import mimetypes
 import psycopg
 from psycopg.rows import dict_row
 
