@@ -149,6 +149,66 @@ button{
   color:#dcff59;
   font-weight:700;
 }
+  /* BOUTONS PRINCIPAUX SONINKARAGO */
+
+.main-nav{
+  position:sticky;
+  top:0;
+  z-index:1000;
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:7px;
+  padding:8px 0;
+  background:#073d27;
+}
+
+.main-nav button{
+  width:100%;
+  min-height:65px;
+  margin:0;
+  padding:10px 5px;
+  font-size:16px;
+  border:2px solid #fcd116;
+  border-radius:14px;
+  background:#0b5d38;
+  color:white;
+}
+
+.main-nav button.on{
+  background:linear-gradient(
+    90deg,
+    #00853f,
+    #fcd116,
+    #ce1126
+  );
+  color:#111;
+}
+
+.main-nav small{
+  font-size:11px;
+  color:inherit;
+}
+
+.promo-flyer img{
+  width:100%;
+  max-height:420px;
+  object-fit:contain;
+  display:block;
+  border-radius:16px;
+}
+
+@media(max-width:700px){
+
+  .promo-flyer img{
+    max-height:300px;
+  }
+
+  .main-nav button{
+    font-size:14px;
+    min-height:58px;
+  }
+
+}
 </style>
 </head>
 
@@ -193,10 +253,12 @@ button{
   </div>
 
 </section>
-<div class="nav">
-  <button class="on" data-p="client">Client</button>
-  <button data-p="driver">Chauffeur</button>
-  <button data-p="admin">Admin</button>
+<div class="nav main-nav">
+  <button class="on" data-p="client">🚕 CLIENT<br><small>Commander</small></button>
+
+  <button data-p="driver">🚗 CHAUFFEUR<br><small>Mes courses</small></button>
+
+  <button data-p="admin">⚙️ ADMIN<br><small>Gestion</small></button>
 </div>
 
 <section id="client">
@@ -462,7 +524,18 @@ document.querySelectorAll('.nav button').forEach(btn=>{
     const page = btn.dataset.p;
 
     if(page){
+
       openPage(page);
+
+      const section = document.getElementById(page);
+
+      if(section){
+        section.scrollIntoView({
+          behavior:'smooth',
+          block:'start'
+        });
+      }
+
     }
 
   });
