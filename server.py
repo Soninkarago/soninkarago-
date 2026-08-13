@@ -1121,7 +1121,7 @@ class App(SimpleHTTPRequestHandler):
                 "SG-"
                 + secrets.token_hex(6).upper()
             )
-tracking_token = secrets.token_urlsafe(32)
+            tracking_token = secrets.token_urlsafe(32)
             client_name = str(
                 data.get(
                     "client_name",
