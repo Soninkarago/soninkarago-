@@ -209,6 +209,38 @@ button{
   }
 
 }
+  .sponsors-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:12px;
+}
+
+.sponsor-card{
+  background:#fff;
+  border-radius:16px;
+  overflow:hidden;
+  aspect-ratio:1 / 1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+.sponsor-card img{
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  display:block;
+}
+
+@media(max-width:700px){
+  .sponsors-grid{
+    grid-template-columns:1fr;
+  }
+
+  .sponsor-card{
+    aspect-ratio:4 / 3;
+  }
+}
 </style>
 </head>
 
@@ -220,39 +252,7 @@ button{
   <h1>SoninkaraGo</h1>
   <p>Votre trajet, en toute confiance.</p>
 </div>
-<section class="promo-zone">
 
-  <div class="promo-flyer">
-    <h2>🚕 SoninkaraGo au service de Moudéry</h2>
-    <p>
-      Commandez votre trajet simplement, suivez votre chauffeur en direct
-      et voyagez en toute confiance.
-    </p>
-
-  <img src="IMG_0421.png" alt="Flyer SoninkaraGo">
-  </div>
-
-  <div class="sponsors-zone">
-    <h3>🤝 Nos sponsors</h3>
-
-    <div class="sponsors-grid">
-
-      <div class="sponsor-card">
-        <img src="IMG_0420.png" alt="SA78 Service Accompagnement78">
-      </div>
-
-      <div class="sponsor-card">
-       <img src="IMG_0317.png" alt="20 Vainqueurs Moudéry">
-      </div>
-
-      <div class="sponsor-card">
-      <img src="IMG_1212.jpeg" alt="QPLV">
-      </div>
-
-    </div>
-  </div>
-
-</section>
 <div class="nav main-nav">
   <button class="on" data-p="client">🚕 CLIENT<br><small>Commander</small></button>
 
@@ -341,7 +341,39 @@ Aucune course.
 
 </div>
 </section>
+<section class="promo-zone">
 
+  <div class="promo-flyer">
+    <h2>🚕 SoninkaraGo au service de Moudéry</h2>
+    <p>
+      Commandez votre trajet simplement, suivez votre chauffeur en direct
+      et voyagez en toute confiance.
+    </p>
+
+  <img src="IMG_0421.png" alt="Flyer SoninkaraGo">
+  </div>
+
+  <div class="sponsors-zone">
+    <h3>🤝 Nos sponsors</h3>
+
+    <div class="sponsors-grid">
+
+      <div class="sponsor-card">
+        <img src="IMG_0420.png" alt="SA78 Service Accompagnement78">
+      </div>
+
+      <div class="sponsor-card">
+       <img src="IMG_0317.png" alt="20 Vainqueurs Moudéry">
+      </div>
+
+      <div class="sponsor-card">
+      <img src="IMG_1212.jpeg" alt="QPLV">
+      </div>
+
+    </div>
+  </div>
+
+</section>
 
 <section id="driver" class="hidden">
 
