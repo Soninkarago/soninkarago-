@@ -455,7 +455,25 @@ class App(SimpleHTTPRequestHandler):
 
         if path in ("/", "/index.html"):
             return self.serve_index()
+        if path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico")):
+            file_path = os.path.join(ROOT, path.lstrip("/"))
 
+            if not os.path.isfile(file_path):
+                return self.sendj({"error": "Introuvable"}, 404)
+
+            content_type, _ = mimetypes.guess_type(file_path)
+            if not content_type:
+                content_type = "application/octet-stream"
+
+            with open(file_path, "rb") as f:
+                data = f.read()
+
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path == "/api/health":
             return self.sendj({
                 "ok": True,
