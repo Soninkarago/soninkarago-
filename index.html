@@ -4,7 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SoninkaraGo</title>
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
 
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+</script>
 <style>
 body{
   margin:0;
@@ -123,6 +130,25 @@ button{
 @media(max-width:700px){
   .grid{grid-template-columns:1fr}
 }
+  #clientMap,
+#driverMap{
+  width:100%;
+  height:350px;
+  border-radius:18px;
+  margin-top:15px;
+  overflow:hidden;
+  border:1px solid #234433;
+}
+
+.gpsInfo{
+  margin-top:10px;
+  color:#9db2a3;
+}
+
+.gpsActive{
+  color:#dcff59;
+  font-weight:700;
+}
 </style>
 </head>
 
@@ -202,11 +228,22 @@ button{
 <div id="orderError" class="error"></div>
 <div id="orderSuccess" class="success"></div>
 </div>
-
 <div class="card">
 <h2>Dernière course</h2>
-<div id="status" class="sub">Aucune course.</div>
+
+<div id="status" class="sub">
+Aucune course.
 </div>
+
+<button id="clientGpsBtn" class="secondary hidden">
+📍 Activer ma position
+</button>
+
+<div id="clientGpsInfo" class="gpsInfo"></div>
+
+<div id="clientMap" class="hidden"></div>
+</div>
+
 
 </div>
 </section>
@@ -290,7 +327,19 @@ Déconnexion
 </button>
 
 <div id="rides"></div>
+<div id="driverTracking" class="hidden">
 
+<h3>GPS de la course</h3>
+
+<button id="driverGpsBtn">
+📍 Activer ma position
+</button>
+
+<div id="driverGpsInfo" class="gpsInfo"></div>
+
+<div id="driverMap"></div>
+
+</div>
 </div>
 </section>
 
@@ -379,7 +428,22 @@ let lastRide=localStorage.getItem('lastRide')||null;
 let driverToken=sessionStorage.getItem('driverToken')||'';
 let adminToken=sessionStorage.getItem('adminToken')||'';
 let currentDriver=sessionStorage.getItem('driverName')||'';
+let trackingToken =
+localStorage.getItem('trackingToken') || '';
 
+let activeDriverRide = null;
+
+let clientWatchId = null;
+let driverWatchId = null;
+
+let clientMap = null;
+let driverMap = null;
+
+let clientSelfMarker = null;
+let clientDriverMarker = null;
+
+let driverSelfMarker = null;
+let driverClientMarker = null;
 
 function esc(v){
 return String(v??'')
@@ -478,7 +542,16 @@ localStorage.setItem(
 'lastRide',
 lastRide
 );
+trackingToken = r.tracking_token || '';
 
+localStorage.setItem(
+'trackingToken',
+trackingToken
+);
+
+if(trackingToken){
+    $('#clientGpsBtn').classList.remove('hidden');
+}
 $('#orderSuccess').textContent=
 'Commande envoyée avec succès.';
 
@@ -677,7 +750,28 @@ const rs=await get(
 '/rides',
 driverToken
 );
+const acceptedRide =
+rs.find(
+    r=>r.status==='accepted'
+);
 
+activeDriverRide =
+acceptedRide
+? acceptedRide.id
+: null;
+
+if(activeDriverRide){
+
+    $('#driverTracking')
+    .classList.remove('hidden');
+
+}
+else{
+
+    $('#driverTracking')
+    .classList.add('hidden');
+
+}
 $('#rides').innerHTML=
 rs.map(r=>`
 
@@ -744,7 +838,13 @@ await post(
 {},
 driverToken
 );
+activeDriverRide=id;
 
+$('#driverTracking')
+.classList.remove('hidden');
+
+$('#driverGpsInfo').textContent =
+'Course acceptée. Activez votre position GPS.';
 refreshDriver();
 
 }catch(e){
@@ -764,7 +864,12 @@ await post(
 {},
 driverToken
 );
+stopDriverGps();
 
+activeDriverRide=null;
+
+$('#driverTracking')
+.classList.add('hidden');
 refreshDriver();
 
 }catch(e){
@@ -1004,7 +1109,481 @@ alert(e.message);
 
 }
 }
+/* =========================
+   GPS CLIENT
+========================= */
 
+function createClientMap(lat,lng){
+
+    $('#clientMap').classList.remove('hidden');
+
+    if(!clientMap){
+
+        clientMap = L.map('clientMap').setView(
+            [lat,lng],
+            15
+        );
+
+        L.tileLayer(
+            'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            {
+                maxZoom:19,
+                attribution:'© OpenStreetMap'
+            }
+        ).addTo(clientMap);
+    }
+
+    if(!clientSelfMarker){
+
+        clientSelfMarker = L.marker(
+            [lat,lng]
+        ).addTo(clientMap);
+
+        clientSelfMarker.bindPopup(
+            '📍 Votre position'
+        );
+    }
+    else{
+        clientSelfMarker.setLatLng(
+            [lat,lng]
+        );
+    }
+
+    clientMap.setView(
+        [lat,lng],
+        15
+    );
+
+    setTimeout(
+        ()=>clientMap.invalidateSize(),
+        200
+    );
+}
+
+
+async function sendClientLocation(lat,lng){
+
+    if(!lastRide || !trackingToken){
+        return;
+    }
+
+    try{
+
+        await post(
+            '/rides/' +
+            encodeURIComponent(lastRide) +
+            '/location/client',
+            {
+                lat,
+                lng,
+                tracking_token:trackingToken
+            }
+        );
+
+    }catch(e){
+
+        console.log(
+            'GPS client:',
+            e.message
+        );
+    }
+}
+
+
+async function refreshDriverPositionForClient(){
+
+    if(!lastRide || !trackingToken){
+        return;
+    }
+
+    try{
+
+        const r = await get(
+            '/rides/' +
+            encodeURIComponent(lastRide) +
+            '/tracking?token=' +
+            encodeURIComponent(trackingToken)
+        );
+
+        if(
+            r.driver_lat != null &&
+            r.driver_lng != null
+        ){
+
+            const pos = [
+                Number(r.driver_lat),
+                Number(r.driver_lng)
+            ];
+
+            if(!clientDriverMarker){
+
+                clientDriverMarker =
+                L.marker(pos)
+                .addTo(clientMap);
+
+                clientDriverMarker.bindPopup(
+                    '🚕 ' +
+                    (
+                        r.driver_name ||
+                        'Chauffeur'
+                    )
+                );
+            }
+            else{
+
+                clientDriverMarker.setLatLng(pos);
+            }
+
+            $('#clientGpsInfo').innerHTML =
+            '<span class="gpsActive">🚕 Chauffeur localisé</span>';
+
+        }
+        else if(r.status === 'accepted'){
+
+            $('#clientGpsInfo').textContent =
+            'Course acceptée. En attente de la position du chauffeur…';
+        }
+        else{
+
+            $('#clientGpsInfo').textContent =
+            'Recherche d’un chauffeur…';
+        }
+
+        if(r.status === 'completed'){
+
+            $('#clientGpsInfo').textContent =
+            'Course terminée. Suivi GPS arrêté.';
+
+            stopClientGps();
+        }
+
+    }catch(e){
+
+        console.log(
+            'Suivi chauffeur:',
+            e.message
+        );
+    }
+}
+
+
+function startClientGps(){
+
+    if(!navigator.geolocation){
+
+        $('#clientGpsInfo').textContent =
+        'GPS non disponible sur ce téléphone.';
+
+        return;
+    }
+
+    $('#clientGpsInfo').textContent =
+    'Autorisez la localisation sur votre téléphone…';
+
+    clientWatchId =
+    navigator.geolocation.watchPosition(
+
+        async position=>{
+
+            const lat =
+            position.coords.latitude;
+
+            const lng =
+            position.coords.longitude;
+
+            createClientMap(lat,lng);
+
+            $('#clientGpsInfo').innerHTML =
+            '<span class="gpsActive">📍 Position activée</span>';
+
+            await sendClientLocation(
+                lat,
+                lng
+            );
+
+            await refreshDriverPositionForClient();
+        },
+
+        error=>{
+
+            $('#clientGpsInfo').textContent =
+            'Impossible d’obtenir votre position. Vérifiez l’autorisation GPS.';
+        },
+
+        {
+            enableHighAccuracy:true,
+            maximumAge:3000,
+            timeout:10000
+        }
+    );
+}
+
+
+function stopClientGps(){
+
+    if(clientWatchId !== null){
+
+        navigator.geolocation.clearWatch(
+            clientWatchId
+        );
+
+        clientWatchId = null;
+    }
+}
+
+
+$('#clientGpsBtn').onclick=()=>{
+
+    if(clientWatchId !== null){
+        return;
+    }
+
+    startClientGps();
+};
+
+
+
+/* =========================
+   GPS CHAUFFEUR
+========================= */
+
+function createDriverMap(lat,lng){
+
+    $('#driverTracking')
+    .classList.remove('hidden');
+
+    if(!driverMap){
+
+        driverMap =
+        L.map('driverMap')
+        .setView(
+            [lat,lng],
+            15
+        );
+
+        L.tileLayer(
+            'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            {
+                maxZoom:19,
+                attribution:'© OpenStreetMap'
+            }
+        ).addTo(driverMap);
+    }
+
+    if(!driverSelfMarker){
+
+        driverSelfMarker =
+        L.marker(
+            [lat,lng]
+        )
+        .addTo(driverMap);
+
+        driverSelfMarker.bindPopup(
+            '🚕 Votre position'
+        );
+    }
+    else{
+
+        driverSelfMarker.setLatLng(
+            [lat,lng]
+        );
+    }
+
+    driverMap.setView(
+        [lat,lng],
+        15
+    );
+
+    setTimeout(
+        ()=>driverMap.invalidateSize(),
+        200
+    );
+}
+
+
+async function sendDriverLocation(lat,lng){
+
+    if(!activeDriverRide){
+        return;
+    }
+
+    try{
+
+        await post(
+            '/rides/' +
+            encodeURIComponent(activeDriverRide) +
+            '/location/driver',
+            {
+                lat,
+                lng
+            },
+            driverToken
+        );
+
+    }catch(e){
+
+        console.log(
+            'GPS chauffeur:',
+            e.message
+        );
+    }
+}
+
+
+async function refreshClientPositionForDriver(){
+
+    if(!activeDriverRide){
+        return;
+    }
+
+    try{
+
+        const r = await get(
+            '/rides/' +
+            encodeURIComponent(activeDriverRide) +
+            '/client-location',
+            driverToken
+        );
+
+        if(
+            r.client_lat != null &&
+            r.client_lng != null
+        ){
+
+            const pos = [
+                Number(r.client_lat),
+                Number(r.client_lng)
+            ];
+
+            if(!driverClientMarker){
+
+                driverClientMarker =
+                L.marker(pos)
+                .addTo(driverMap);
+
+                driverClientMarker.bindPopup(
+                    '📍 Client'
+                );
+            }
+            else{
+
+                driverClientMarker.setLatLng(
+                    pos
+                );
+            }
+
+            $('#driverGpsInfo').innerHTML =
+            '<span class="gpsActive">📍 Client localisé</span>';
+        }
+        else{
+
+            $('#driverGpsInfo').textContent =
+            'En attente de la position GPS du client…';
+        }
+
+        if(r.status === 'completed'){
+
+            $('#driverGpsInfo').textContent =
+            'Course terminée. GPS arrêté.';
+
+            stopDriverGps();
+        }
+
+    }catch(e){
+
+        console.log(
+            'Position client:',
+            e.message
+        );
+    }
+}
+
+
+function startDriverGps(){
+
+    if(!activeDriverRide){
+
+        alert(
+            'Acceptez d’abord une course.'
+        );
+
+        return;
+    }
+
+    if(!navigator.geolocation){
+
+        $('#driverGpsInfo').textContent =
+        'GPS non disponible sur ce téléphone.';
+
+        return;
+    }
+
+    $('#driverGpsInfo').textContent =
+    'Autorisez la localisation sur votre téléphone…';
+
+    driverWatchId =
+    navigator.geolocation.watchPosition(
+
+        async position=>{
+
+            const lat =
+            position.coords.latitude;
+
+            const lng =
+            position.coords.longitude;
+
+            createDriverMap(
+                lat,
+                lng
+            );
+
+            $('#driverGpsInfo').innerHTML =
+            '<span class="gpsActive">🚕 Position chauffeur activée</span>';
+
+            await sendDriverLocation(
+                lat,
+                lng
+            );
+
+            await refreshClientPositionForDriver();
+        },
+
+        error=>{
+
+            $('#driverGpsInfo').textContent =
+            'Impossible d’obtenir votre position. Vérifiez l’autorisation GPS.';
+        },
+
+        {
+            enableHighAccuracy:true,
+            maximumAge:3000,
+            timeout:10000
+        }
+    );
+}
+
+
+function stopDriverGps(){
+
+    if(driverWatchId !== null){
+
+        navigator.geolocation.clearWatch(
+            driverWatchId
+        );
+
+        driverWatchId = null;
+    }
+}
+
+
+$('#driverGpsBtn').onclick=()=>{
+
+    if(driverWatchId !== null){
+        return;
+    }
+
+    startDriverGps();
+};
 
 /* NAVIGATION */
 
@@ -1059,22 +1638,39 @@ showAdminArea();
 
 updateFare();
 refreshClient();
-
+if(lastRide && trackingToken){
+    $('#clientGpsBtn').classList.remove('hidden');
+}
 setInterval(
-()=>{
+    ()=>{
 
-refreshClient();
+        refreshClient();
 
-if(driverToken){
-refreshDriver();
-}
+        if(driverToken){
+            refreshDriver();
+        }
 
-if(adminToken){
-refreshAdmin();
-}
+        if(adminToken){
+            refreshAdmin();
+        }
 
-},
-5000
+        if(
+            lastRide &&
+            trackingToken &&
+            clientWatchId !== null
+        ){
+            refreshDriverPositionForClient();
+        }
+
+        if(
+            activeDriverRide &&
+            driverWatchId !== null
+        ){
+            refreshClientPositionForDriver();
+        }
+
+    },
+    5000
 );
 
 </script>
