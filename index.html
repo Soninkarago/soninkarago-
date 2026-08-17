@@ -920,7 +920,37 @@ $('#driverLogin').classList.remove('hidden');
 
 
 $('#driverLogout').onclick=driverLogout;
+let driverOnline = false;
 
+$('#driverOnlineBtn').onclick = () => {
+
+  driverOnline = !driverOnline;
+
+  if(driverOnline){
+
+    $('#driverOnlineBtn').textContent =
+    '🔴 Se mettre hors ligne';
+
+    $('#driverOnlineStatus').textContent =
+    'En ligne';
+
+    $('#driverOnlineStatus')
+    .classList.add('gpsActive');
+
+  }else{
+
+    $('#driverOnlineBtn').textContent =
+    '🟢 Se mettre en ligne';
+
+    $('#driverOnlineStatus').textContent =
+    'Hors ligne';
+
+    $('#driverOnlineStatus')
+    .classList.remove('gpsActive');
+
+  }
+
+};
 
 async function refreshDriver(){
 
