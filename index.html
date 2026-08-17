@@ -936,7 +936,7 @@ $('#driverOnlineBtn').onclick = () => {
 
     $('#driverOnlineStatus')
     .classList.add('gpsActive');
-
+    startDriverGps();
   }else{
 
     $('#driverOnlineBtn').textContent =
@@ -947,7 +947,7 @@ $('#driverOnlineBtn').onclick = () => {
 
     $('#driverOnlineStatus')
     .classList.remove('gpsActive');
-
+    stopDriverGps();
   }
 
 };
