@@ -1004,6 +1004,9 @@ ${esc(r.client_name)}
 ${esc(r.vehicle)}
 •
 ${esc(r.status)}
+${r.created_at
+? '<br>📅 ' + new Date(r.created_at).toLocaleString('fr-FR')
+: ''}
 </div>
 </div>
 
