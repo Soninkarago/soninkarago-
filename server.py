@@ -1482,11 +1482,11 @@ if path == "/api/driver/location":
             )
         )
 
-    return self.sendj({"ok": True})
-                    # POSITION GPS CHAUFFEUR
+        return self.sendj({"ok": True})
+        # POSITION GPS CHAUFFEUR
         if (
-            path.startswith("/api/rides/")
-            and path.endswith("/location/driver")
+        path.startswith("/api/rides/")
+        and path.endswith("/location/driver")
         ):
 
             user = self.auth()
