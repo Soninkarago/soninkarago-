@@ -1435,6 +1435,54 @@ class App(SimpleHTTPRequestHandler):
                 )
 
             return self.sendj({"ok": True})
+            # CHAUFFEUR EN LIGNE + POSITION GPS
+
+if path == "/api/driver/location":
+
+    user = self.auth()
+
+    if (
+        not user
+        or user.get("role") != "driver"
+    ):
+        return self.sendj(
+            {"error": "Connexion chauffeur requise"},
+            401
+        )
+
+    coords = valid_coords(
+        data.get("lat"),
+        data.get("lng")
+    )
+
+    if not coords:
+        return self.sendj(
+            {"error": "Position GPS invalide"},
+            400
+        )
+
+    lat, lng = coords
+
+    with db() as conn:
+        conn.execute(
+            """
+            UPDATE drivers
+            SET
+                online=TRUE,
+                latitude=%s,
+                longitude=%s,
+                last_location_at=%s
+            WHERE id=%s
+            """,
+            (
+                lat,
+                lng,
+                int(time.time()),
+                user.get("driver_id")
+            )
+        )
+
+    return self.sendj({"ok": True})
                     # POSITION GPS CHAUFFEUR
         if (
             path.startswith("/api/rides/")
