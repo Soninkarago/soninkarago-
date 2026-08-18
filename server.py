@@ -254,6 +254,10 @@ def init():
             ALTER TABLE drivers
             ADD COLUMN IF NOT EXISTS last_location_at BIGINT
         """)
+        conn.execute("""
+    ALTER TABLE drivers
+    ADD COLUMN IF NOT EXISTS balance INTEGER NOT NULL DEFAULT 0
+""")
 
 
 def hash_pin(pin, salt=None):
