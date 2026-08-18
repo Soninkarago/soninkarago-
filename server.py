@@ -235,6 +235,25 @@ def init():
                 created_at BIGINT NOT NULL
             )
         """)
+        conn.execute("""
+    ALTER TABLE drivers
+    ADD COLUMN IF NOT EXISTS online BOOLEAN NOT NULL DEFAULT FALSE
+""")
+
+conn.execute("""
+    ALTER TABLE drivers
+    ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION
+""")
+
+conn.execute("""
+    ALTER TABLE drivers
+    ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION
+""")
+
+conn.execute("""
+    ALTER TABLE drivers
+    ADD COLUMN IF NOT EXISTS last_location_at BIGINT
+""")
 
 
 def hash_pin(pin, salt=None):
