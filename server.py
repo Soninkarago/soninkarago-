@@ -235,7 +235,7 @@ def init():
                 created_at BIGINT NOT NULL
             )
         """)
-        conn.execute("""
+conn.execute("""
     ALTER TABLE drivers
     ADD COLUMN IF NOT EXISTS online BOOLEAN NOT NULL DEFAULT FALSE
 """)
