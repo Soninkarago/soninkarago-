@@ -1273,43 +1273,86 @@ class App(SimpleHTTPRequestHandler):
 
             ride_id = path.split("/")[3]
 
-            with db() as conn:
-                cur = conn.execute(
-                    """
-                    UPDATE rides
-                    SET
-                        status='accepted',
-                        driver_name=%s,
-                        driver_id=%s
-                    WHERE
-                        id=%s
-                        AND status='searching'
-                    """,
-                    (
-                        user.get(
-                            "name",
-                            "Chauffeur"
-                        ),
-                        user.get(
-                            "driver_id",
-                            ""
-                        ),
-                        ride_id
-                    )
-                )
+        with db() as conn:
 
-            if not cur.rowcount:
-                return self.sendj(
-                    {
-                        "error":
-                        "Course déjà prise ou introuvable"
-                    },
-                    409
-                )
+    # 1. Récupérer la course et verrouiller pendant l'acceptation
+    ride = conn.execute(
+        """
+        SELECT fare
+        FROM rides
+        WHERE id=%s
+          AND status='searching'
+        FOR UPDATE
+        """,
+        (ride_id,)
+    ).fetchone()
 
-            return self.sendj({
-                "ok": True
-            })
+    if not ride:
+        return self.sendj(
+            {"error": "Course déjà prise ou indisponible"},
+            409
+        )
+
+    fare = int(ride[0] or 0)
+
+    # Commission SoninkaraGo = 10 %
+    commission = (fare + 9) // 10
+
+    driver_id = user.get("driver_id")
+
+    # 2. Débiter les 10 % seulement si le solde est suffisant
+    debit = conn.execute(
+        """
+        UPDATE drivers
+        SET balance = balance - %s
+        WHERE id=%s
+          AND balance >= %s
+        """,
+        (
+            commission,
+            driver_id,
+            commission
+        )
+    )
+
+    if not debit.rowcount:
+        return self.sendj(
+            {
+                "error": "Solde insuffisant",
+                "required": commission
+            },
+            402
+        )
+
+    # 3. Le chauffeur peut maintenant prendre la course
+    cur = conn.execute(
+        """
+        UPDATE rides
+        SET
+            status='accepted',
+            driver_name=%s,
+            driver_id=%s
+        WHERE
+            id=%s
+            AND status='searching'
+        """,
+        (
+            user.get("name", "Chauffeur"),
+            driver_id,
+            ride_id
+        )
+    )
+
+    if not cur.rowcount:
+        return self.sendj(
+            {"error": "Course déjà prise"},
+            409
+        )
+
+return self.sendj({
+    "ok": True,
+    "commission": commission
+})    
 
 
         # CHAUFFEUR TERMINE COURSE
