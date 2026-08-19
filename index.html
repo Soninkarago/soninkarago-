@@ -965,6 +965,71 @@ $('#driverLogin').classList.remove('hidden');
 
 
 $('#driverLogout').onclick=driverLogout;
+  $('#driverRechargeBtn').onclick = async () => {
+
+  const amount = prompt(
+    'Montant à recharger en FCFA :'
+  );
+
+  if(!amount){
+    return;
+  }
+
+  const value = Number(amount);
+
+  if(
+    !Number.isFinite(value) ||
+    value < 500
+  ){
+    alert('Montant minimum : 500 F');
+    return;
+  }
+
+  const method = prompt(
+    'Choisissez le paiement :\n1 = Wave\n2 = Orange Money'
+  );
+
+  let payment = '';
+
+  if(method === '1'){
+    payment = 'wave';
+  }
+  else if(method === '2'){
+    payment = 'orange_money';
+  }
+  else{
+    alert('Choix invalide.');
+    return;
+  }
+
+  try{
+
+    const r = await post(
+      '/driver/recharge',
+      {
+        amount: value,
+        payment
+      },
+      driverToken
+    );
+
+    if(r.payment_url){
+      window.location.href = r.payment_url;
+      return;
+    }
+
+    alert(
+      r.message ||
+      'Paiement en cours.'
+    );
+
+  }catch(e){
+
+    alert(e.message);
+
+  }
+
+};
 let driverOnline = false;
 
 $('#driverOnlineBtn').onclick = () => {
