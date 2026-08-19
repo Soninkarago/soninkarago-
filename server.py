@@ -595,7 +595,39 @@ class App(SimpleHTTPRequestHandler):
                     ).fetchall()
 
             return self.sendj(rows)
+        # SOLDE CHAUFFEUR
+        if path == "/api/driver/me":
 
+            user = self.auth()
+
+            if (
+                not user
+                or user.get("role") != "driver"
+            ):
+                return self.sendj(
+                    {"error": "Connexion chauffeur requise"},
+                    401
+                )
+
+            with db() as conn:
+                driver = conn.execute(
+                    """
+                    SELECT balance
+                    FROM drivers
+                    WHERE id=%s
+                    """,
+                    (user.get("driver_id"),)
+                ).fetchone()
+
+            if not driver:
+                return self.sendj(
+                    {"error": "Chauffeur introuvable"},
+                    404
+                )
+
+            return self.sendj({
+                "balance": int(driver["balance"] or 0)
+            })
 
         # Statistiques Admin
         if path == "/api/stats":
