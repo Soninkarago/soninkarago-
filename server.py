@@ -1303,7 +1303,7 @@ class App(SimpleHTTPRequestHandler):
                         409
                     )
 
-                fare = int(ride[0] or 0)
+                fare = int(ride["fare"] or 0)
 
                 # Commission SoninkaraGo = 10 %
                 commission = (fare + 9) // 10
