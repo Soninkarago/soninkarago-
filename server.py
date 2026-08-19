@@ -803,7 +803,50 @@ class App(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         data = self.body()
+        # RECHARGE COMPTE CHAUFFEUR
+        if path == "/api/driver/recharge":
 
+            user = self.auth()
+
+            if (
+                not user
+                or user.get("role") != "driver"
+            ):
+                return self.sendj(
+                    {"error": "Connexion chauffeur requise"},
+                    401
+                )
+
+            try:
+                amount = int(data.get("amount", 0))
+            except:
+                amount = 0
+
+            payment = str(
+                data.get("payment", "")
+            ).strip()
+
+            if amount < 500:
+                return self.sendj(
+                    {"error": "Montant minimum : 500 F"},
+                    400
+                )
+
+            if payment not in (
+                "wave",
+                "orange_money"
+            ):
+                return self.sendj(
+                    {"error": "Mode de paiement invalide"},
+                    400
+                )
+
+            return self.sendj({
+                "ok": True,
+                "message": "Demande de paiement créée. Connexion Wave / Orange Money à terminer.",
+                "amount": amount,
+                "payment": payment
+            })
 
         # INSCRIPTION CHAUFFEUR
         if path == "/api/register/driver":
