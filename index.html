@@ -1002,7 +1002,22 @@ async function refreshDriver(){
 if(!driverToken){
 return;
 }
+try{
 
+  const me = await get(
+    '/driver/me',
+    driverToken
+  );
+
+  $('#driverBalance').textContent =
+  money(me.balance);
+
+}catch(e){
+
+  $('#driverBalance').textContent =
+  '0 F';
+
+}
 try{
 
 const rs=await get(
