@@ -671,19 +671,29 @@ $('#route').onchange=updateFare;
 
 async function request(path,options={}){
 
-const r=await fetch('/api'+path,options);
+    const r = await fetch('/api' + path, options);
 
-let data={};
+    let data = {};
 
-try{
-data=await r.json();
-}catch(e){}
+    try{
+        data = await r.json();
+    }catch(e){
+        data = {};
+    }
 
-if(!r.ok){
-throw new Error(data.error||'Une erreur est survenue');
-}
+    if(!r.ok){
 
-return data;
+        const err = new Error(
+            data.error || 'Une erreur est survenue'
+        );
+
+        err.status = r.status;
+        err.data = data;
+
+        throw err;
+    }
+
+    return data;
 }
 
 
