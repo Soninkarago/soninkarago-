@@ -1908,32 +1908,27 @@ class App(SimpleHTTPRequestHandler):
             ride_id = path.split("/")[3]
 
             with db() as conn:
-                                cur = conn.execute(
+                                
+                cur = conn.execute(
                     """
                     UPDATE rides
                     SET status='completed'
-                    WHERE
-                        id=%s
-                        AND driver_id=%s
-                        AND (
-                            (
-                                vehicle='Minicar 14 places'
-                                AND payment_status='fully_paid'
-                            )
-                            OR
-                            (
-                                vehicle<>'Minicar 14 places'
-                                AND status='accepted'
-                            )
-                        )
+                    WHERE id=%s
+                      AND driver_id=%s
+                      AND (
+                          (
+                              vehicle='Minicar 14 places'
+                              AND payment_status='fully_paid'
+                          )
+                          OR
+                          (
+                              vehicle<>'Minicar 14 places'
+                              AND status='accepted'
+                          )
+                      )
                     """,
-                    (
-                        ride_id,
-                        user.get("driver_id")
-                    )
+                    (ride_id, user.get("driver_id"))
                 )
-                )
-
                         if not cur.rowcount:
                 return self.sendj(
                     {
