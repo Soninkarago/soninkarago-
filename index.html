@@ -325,7 +325,78 @@ Minicar 14 places — Diawara → Dakar — 180 000 F — Gros bagages : supplé
 </optgroup>
 
 </select>
+<div id="minicarBooking" class="hidden">
 
+  <div style="
+    margin-top:15px;
+    padding:15px;
+    border:2px solid #fcd116;
+    border-radius:15px;
+    background:#082d1e;
+  ">
+
+    <h3>🚌 Réservation du minicar complet</h3>
+
+    <p class="sub">
+      Vous réservez le véhicule complet de 14 places.
+      Le prix n’est pas calculé par passager.
+    </p>
+
+    <label>Date du départ *</label>
+    <input id="departureDate" type="date">
+
+    <label>Heure du départ *</label>
+    <input id="departureTime" type="time">
+
+    <label>Lieu exact de rendez-vous *</label>
+    <input
+      id="meetingPoint"
+      placeholder="Exemple : Gare routière de Dakar"
+    >
+
+    <label>Nombre de passagers *</label>
+    <input
+      id="passengerCount"
+      type="number"
+      min="1"
+      max="14"
+      value="14"
+    >
+
+    <label>Type de trajet</label>
+    <select id="tripType">
+      <option value="one_way">Aller simple</option>
+      <option value="round_trip">Aller-retour</option>
+    </select>
+
+    <div id="returnBooking" class="hidden">
+
+      <label>Date du retour *</label>
+      <input id="returnDate" type="date">
+
+      <label>Heure du retour *</label>
+      <input id="returnTime" type="time">
+
+    </div>
+
+    <label>Bagages</label>
+    <select id="luggage">
+      <option value="small">Petits bagages</option>
+      <option value="medium">Bagages moyens</option>
+      <option value="large">
+        Gros bagages — supplément à voir avec le chauffeur
+      </option>
+    </select>
+
+    <label>Informations supplémentaires</label>
+    <input
+      id="bookingNote"
+      placeholder="Exemple : enfants, nombreux bagages..."
+    >
+
+  </div>
+
+</div>
 <label>Paiement</label>
 <select id="payment">
 <option>Espèces</option>
@@ -674,12 +745,52 @@ return String(v??'')
 }
 
 
-function updateFare(){
-const code=$('#route').value;
-$('#fare').textContent=money(prices[code]||0);
+function isMinicarRoute(){
+  return $('#route').value.startsWith('minicar_');
 }
 
-$('#route').onchange=updateFare;
+function updateFare(){
+
+  const code = $('#route').value;
+  const minicar = isMinicarRoute();
+
+  $('#fare').textContent = money(prices[code] || 0);
+
+  $('#minicarBooking').classList.toggle(
+    'hidden',
+    !minicar
+  );
+
+  $('#order').textContent = minicar
+    ? '🚌 Réserver le minicar 14 places'
+    : 'Commander';
+
+}
+
+$('#route').onchange = updateFare;
+
+$('#tripType').onchange = () => {
+
+  const roundTrip =
+    $('#tripType').value === 'round_trip';
+
+  $('#returnBooking').classList.toggle(
+    'hidden',
+    !roundTrip
+  );
+
+};
+
+/* Interdire les dates déjà passées */
+
+const today = new Date()
+  .toISOString()
+  .split('T')[0];
+
+$('#departureDate').min = today;
+$('#returnDate').min = today;
+
+updateFare();
 
 
 async function request(path,options={}){
@@ -755,13 +866,105 @@ $('#orderSuccess').textContent='';
 
 try{
 
+const minicar = isMinicarRoute();
+
+const passengers =
+  Number($('#passengerCount').value);
+
+if(minicar){
+
+  if(!$('#departureDate').value){
+    throw new Error(
+      'Choisissez la date du départ.'
+    );
+  }
+
+  if(!$('#departureTime').value){
+    throw new Error(
+      'Choisissez l’heure du départ.'
+    );
+  }
+
+  if(!$('#meetingPoint').value.trim()){
+    throw new Error(
+      'Indiquez le lieu exact de rendez-vous.'
+    );
+  }
+
+  if(
+    !Number.isInteger(passengers) ||
+    passengers < 1 ||
+    passengers > 14
+  ){
+    throw new Error(
+      'Le nombre de passagers doit être compris entre 1 et 14.'
+    );
+  }
+
+  if(
+    $('#tripType').value === 'round_trip' &&
+    (
+      !$('#returnDate').value ||
+      !$('#returnTime').value
+    )
+  ){
+    throw new Error(
+      'Indiquez la date et l’heure du retour.'
+    );
+  }
+
+}
+
 const r=await post(
 '/rides',
 {
-client_name:$('#name').value.trim()||'Client',
-phone:$('#phone').value.trim(),
-route_code:$('#route').value,
-payment:$('#payment').value
+  client_name:
+    $('#name').value.trim() || 'Client',
+
+  phone:
+    $('#phone').value.trim(),
+
+  route_code:
+    $('#route').value,
+
+  payment:
+    $('#payment').value,
+
+  booking_type:
+    minicar ? 'reservation' : 'immediate',
+
+  departure_date:
+    minicar ? $('#departureDate').value : '',
+
+  departure_time:
+    minicar ? $('#departureTime').value : '',
+
+  meeting_point:
+    minicar ? $('#meetingPoint').value.trim() : '',
+
+  passenger_count:
+    minicar ? passengers : 1,
+
+  trip_type:
+    minicar ? $('#tripType').value : 'one_way',
+
+  return_date:
+    minicar &&
+    $('#tripType').value === 'round_trip'
+      ? $('#returnDate').value
+      : '',
+
+  return_time:
+    minicar &&
+    $('#tripType').value === 'round_trip'
+      ? $('#returnTime').value
+      : '',
+
+  luggage:
+    minicar ? $('#luggage').value : '',
+
+  booking_note:
+    minicar ? $('#bookingNote').value.trim() : ''
 }
 );
 
@@ -781,8 +984,9 @@ trackingToken
 if(trackingToken){
     $('#clientGpsBtn').classList.remove('hidden');
 }
-$('#orderSuccess').textContent=
-'Commande envoyée avec succès.';
+$('#orderSuccess').textContent = minicar
+  ? 'Réservation enregistrée. Un chauffeur doit maintenant confirmer votre minicar.'
+  : 'Commande envoyée avec succès.';
 
 await refreshClient();
 
