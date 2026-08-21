@@ -252,6 +252,57 @@ ROUTES = {
         "destination": "Dakar",
         "fare": 160000
     },
+        "minicar_dakar_louga": {
+        "service": "Minicar 14 places",
+        "pickup": "Dakar",
+        "destination": "Louga",
+        "fare": 60000
+    },
+    "minicar_louga_dakar": {
+        "service": "Minicar 14 places",
+        "pickup": "Louga",
+        "destination": "Dakar",
+        "fare": 60000
+    },
+
+    "minicar_dakar_kaolack": {
+        "service": "Minicar 14 places",
+        "pickup": "Dakar",
+        "destination": "Kaolack",
+        "fare": 60000
+    },
+    "minicar_kaolack_dakar": {
+        "service": "Minicar 14 places",
+        "pickup": "Kaolack",
+        "destination": "Dakar",
+        "fare": 60000
+    },
+
+    "minicar_dakar_saint_louis": {
+        "service": "Minicar 14 places",
+        "pickup": "Dakar",
+        "destination": "Saint-Louis",
+        "fare": 70000
+    },
+    "minicar_saint_louis_dakar": {
+        "service": "Minicar 14 places",
+        "pickup": "Saint-Louis",
+        "destination": "Dakar",
+        "fare": 70000
+    },
+
+    "minicar_dakar_ziguinchor": {
+        "service": "Minicar 14 places",
+        "pickup": "Dakar",
+        "destination": "Ziguinchor",
+        "fare": 150000
+    },
+    "minicar_ziguinchor_dakar": {
+        "service": "Minicar 14 places",
+        "pickup": "Ziguinchor",
+        "destination": "Dakar",
+        "fare": 150000
+    },
     # LIVRAISON
     "delivery_moudery_local": {
         "service": "Livraison de matériel",
