@@ -1929,7 +1929,7 @@ class App(SimpleHTTPRequestHandler):
                     """,
                     (ride_id, user.get("driver_id"))
                 )
-                        if not cur.rowcount:
+            if not cur.rowcount:
                 return self.sendj(
                     {
                         "error":
