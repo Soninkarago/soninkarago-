@@ -131,7 +131,127 @@ ROUTES = {
         "destination": "Bakel aller-retour",
         "fare": 20000
     },
-
+    # MINICAR 14 PLACES
+    "minicar_dakar_touba": {
+        "service": "Minicar 14 places",
+        "pickup": "Dakar",
+        "destination": "Touba",
+        "fare": 70000
+    },
+    "minicar_touba_dakar": {
+        "service": "Minicar 14 places",
+        "pickup": "Touba",
+        "destination": "Dakar",
+        "fare": 70000
+    },
+    "minicar_dakar_matam": {
+        "service": "Minicar 14 places",
+        "pickup": "Dakar",
+        "destination": "Matam",
+        "fare": 180000
+    },
+    "minicar_matam_dakar": {
+        "service": "Minicar 14 places",
+        "pickup": "Matam",
+        "destination": "Dakar",
+        "fare": 180000
+    },
+    "minicar_dakar_bakel": {
+        "service": "Minicar 14 places",
+        "pickup": "Dakar",
+        "destination": "Bakel",
+        "fare": 190000
+    },
+    "minicar_bakel_dakar": {
+        "service": "Minicar 14 places",
+        "pickup": "Bakel",
+        "destination": "Dakar",
+        "fare": 190000
+    },
+    "minicar_dakar_khadebere": {
+        "service": "Minicar 14 places",
+        "pickup": "Dakar",
+        "destination": "Khadé Béré",
+        "fare": 190000
+    },
+    "minicar_khadebere_dakar": {
+        "service": "Minicar 14 places",
+        "pickup": "Khadé Béré",
+        "destination": "Dakar",
+        "fare": 190000
+    },
+    "minicar_moudery_ourossogui": {
+        "service": "Minicar 14 places",
+        "pickup": "Moudéry",
+        "destination": "Ourossogui",
+        "fare": 70000
+    },
+    "minicar_ourossogui_moudery": {
+        "service": "Minicar 14 places",
+        "pickup": "Ourossogui",
+        "destination": "Moudéry",
+        "fare": 70000
+    },
+    "minicar_dakar_ourossogui": {
+        "service": "Minicar 14 places",
+        "pickup": "Dakar",
+        "destination": "Ourossogui",
+        "fare": 180000
+    },
+    "minicar_ourossogui_dakar": {
+        "service": "Minicar 14 places",
+        "pickup": "Ourossogui",
+        "destination": "Dakar",
+        "fare": 180000
+    },
+    "minicar_dakar_waounde": {
+        "service": "Minicar 14 places",
+        "pickup": "Dakar",
+        "destination": "Waoundé",
+        "fare": 200000
+    },
+    "minicar_waounde_dakar": {
+        "service": "Minicar 14 places",
+        "pickup": "Waoundé",
+        "destination": "Dakar",
+        "fare": 200000
+    },
+    "minicar_dakar_diawara": {
+        "service": "Minicar 14 places",
+        "pickup": "Dakar",
+        "destination": "Diawara",
+        "fare": 190000
+    },
+    "minicar_diawara_dakar": {
+        "service": "Minicar 14 places",
+        "pickup": "Diawara",
+        "destination": "Dakar",
+        "fare": 190000
+    },
+    "minicar_dakar_moudery": {
+        "service": "Minicar 14 places",
+        "pickup": "Dakar",
+        "destination": "Moudéry",
+        "fare": 190000
+    },
+    "minicar_moudery_dakar": {
+        "service": "Minicar 14 places",
+        "pickup": "Moudéry",
+        "destination": "Dakar",
+        "fare": 190000
+    },
+    "minicar_dakar_tambacounda": {
+        "service": "Minicar 14 places",
+        "pickup": "Dakar",
+        "destination": "Tambacounda",
+        "fare": 160000
+    },
+    "minicar_tambacounda_dakar": {
+        "service": "Minicar 14 places",
+        "pickup": "Tambacounda",
+        "destination": "Dakar",
+        "fare": 160000
+    },
     # LIVRAISON
     "delivery_moudery_local": {
         "service": "Livraison de matériel",
@@ -153,6 +273,7 @@ ALLOWED_VEHICLES = [
     "Moto-taxi",
     "3 roues",
     "Voiture taxi"
+    "Minicar 14 places"
 ]
 
 
@@ -221,7 +342,74 @@ def init():
             ALTER TABLE rides
             ADD COLUMN IF NOT EXISTS tracking_token TEXT
         """)
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS route_code TEXT
+        """)
 
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS departure_date TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS departure_time TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS meeting_point TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS passenger_count INTEGER DEFAULT 1
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS luggage TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS booking_note TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS payment_status TEXT
+            NOT NULL DEFAULT 'unpaid'
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS deposit_amount INTEGER
+            NOT NULL DEFAULT 0
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS balance_due INTEGER
+            NOT NULL DEFAULT 0
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS commission_charged BOOLEAN
+            NOT NULL DEFAULT FALSE
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS deposit_paid_at BIGINT
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS balance_paid_at BIGINT
+        """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS drivers(
                 id TEXT PRIMARY KEY,
@@ -1206,62 +1394,107 @@ class App(SimpleHTTPRequestHandler):
             })
 
 
-        # CRÉATION COURSE CLIENT
+              # CRÉATION COURSE CLIENT
         if path == "/api/rides":
 
             route_code = str(
-                data.get(
-                    "route_code",
-                    ""
-                )
+                data.get("route_code", "")
             ).strip()
 
             route = ROUTES.get(route_code)
 
             if not route:
                 return self.sendj(
-                    {
-                        "error":
-                        "Ce trajet n'est pas disponible"
-                    },
+                    {"error": "Ce trajet n'est pas disponible"},
                     400
                 )
 
-            fare = int(route["fare"])
+            is_minicar = (
+                route["service"] == "Minicar 14 places"
+            )
 
-            fee = round(
-                fare * 0.10
+            departure_date = str(
+                data.get("departure_date", "")
+            ).strip()
+
+            departure_time = str(
+                data.get("departure_time", "")
+            ).strip()
+
+            meeting_point = str(
+                data.get("meeting_point", "")
+            ).strip()[:200]
+
+            try:
+                passenger_count = int(
+                    data.get("passenger_count", 1)
+                )
+            except (TypeError, ValueError):
+                passenger_count = 1
+
+            if is_minicar:
+                if not departure_date:
+                    return self.sendj(
+                        {"error": "Date de départ obligatoire"},
+                        400
+                    )
+
+                if not departure_time:
+                    return self.sendj(
+                        {"error": "Heure de départ obligatoire"},
+                        400
+                    )
+
+                if not meeting_point:
+                    return self.sendj(
+                        {"error": "Lieu de rendez-vous obligatoire"},
+                        400
+                    )
+
+                if passenger_count < 1 or passenger_count > 14:
+                    return self.sendj(
+                        {"error": "Maximum 14 passagers"},
+                        400
+                    )
+
+            fare = int(route["fare"])
+            fee = (fare + 9) // 10
+
+            deposit_amount = (
+                fare // 2 if is_minicar else 0
+            )
+
+            balance_due = (
+                fare - deposit_amount if is_minicar else 0
             )
 
             ride_id = (
-                "SG-"
-                + secrets.token_hex(6).upper()
+                "SG-" + secrets.token_hex(6).upper()
             )
+
             tracking_token = secrets.token_urlsafe(32)
+
             client_name = str(
-                data.get(
-                    "client_name",
-                    "Client"
-                )
+                data.get("client_name", "Client")
             ).strip()[:80]
 
             phone = str(
-                data.get(
-                    "phone",
-                    ""
-                )
+                data.get("phone", "")
             ).strip()[:30]
 
             payment = str(
-                data.get(
-                    "payment",
-                    "Espèces"
-                )
+                data.get("payment", "Espèces")
             ).strip()[:30]
 
+            luggage = str(
+                data.get("luggage", "")
+            ).strip()[:30]
+
+            booking_note = str(
+                data.get("booking_note", "")
+            ).strip()[:300]
 
             with db() as conn:
-
                 conn.execute(
                     """
                     INSERT INTO rides(
@@ -1277,11 +1510,24 @@ class App(SimpleHTTPRequestHandler):
                         status,
                         driver_name,
                         created_at,
-                        tracking_token
+                        tracking_token,
+                        route_code,
+                        departure_date,
+                        departure_time,
+                        meeting_point,
+                        passenger_count,
+                        luggage,
+                        booking_note,
+                        payment_status,
+                        deposit_amount,
+                        balance_due,
+                        commission_charged
                     )
                     VALUES(
                         %s,%s,%s,%s,%s,%s,
-                        %s,%s,%s,%s,%s,%s,%s
+                        %s,%s,%s,%s,%s,%s,
+                        %s,%s,%s,%s,%s,%s,
+                        %s,%s,%s,%s,%s,%s
                     )
                     """,
                     (
@@ -1297,36 +1543,40 @@ class App(SimpleHTTPRequestHandler):
                         "searching",
                         "",
                         int(time.time()),
-                        tracking_token
+                        tracking_token,
+                        route_code,
+                        departure_date,
+                        departure_time,
+                        meeting_point,
+                        passenger_count,
+                        luggage,
+                        booking_note,
+                        "unpaid",
+                        deposit_amount,
+                        balance_due,
+                        False
                     )
                 )
 
-                row = conn.execute(
-                    """
-                    SELECT
-                        id,
-                        pickup,
-                        destination,
-                        vehicle,
-                        payment,
-                        fare,
-                        status,
-                        driver_name,
-                        tracking_token
-                    FROM rides
-                    WHERE id=%s
-                    """,
-                    (ride_id,)
-                ).fetchone()
-
-
             return self.sendj(
-                row,
+                {
+                    "id": ride_id,
+                    "pickup": route["pickup"],
+                    "destination": route["destination"],
+                    "vehicle": route["service"],
+                    "fare": fare,
+                    "fee": fee,
+                    "status": "searching",
+                    "payment_status": "unpaid",
+                    "deposit_amount": deposit_amount,
+                    "balance_due": balance_due,
+                    "tracking_token": tracking_token
+                },
                 201
-            )
+            )  
 
 
-               # CHAUFFEUR ACCEPTE COURSE
+                       # CHAUFFEUR ACCEPTE COURSE
         if (
             path.startswith("/api/rides/")
             and path.endswith("/accept")
@@ -1339,29 +1589,18 @@ class App(SimpleHTTPRequestHandler):
                 or user.get("role") != "driver"
             ):
                 return self.sendj(
-                    {
-                        "error": "Connexion chauffeur requise"
-                    },
+                    {"error": "Connexion chauffeur requise"},
                     401
                 )
 
             ride_id = path.split("/")[3]
             driver_id = user.get("driver_id")
 
-            if not driver_id:
-                return self.sendj(
-                    {
-                        "error": "Identifiant chauffeur manquant"
-                    },
-                    401
-                )
-
             with db() as conn:
 
-                # Récupérer et verrouiller la course
                 ride = conn.execute(
                     """
-                    SELECT fare
+                    SELECT fare, fee, vehicle
                     FROM rides
                     WHERE id=%s
                       AND status='searching'
@@ -1372,24 +1611,157 @@ class App(SimpleHTTPRequestHandler):
 
                 if not ride:
                     return self.sendj(
-                        {
-                            "error": "Course déjà prise ou indisponible"
-                        },
+                        {"error": "Course déjà prise"},
                         409
                     )
 
-                fare = int(ride["fare"] or 0)
+                commission = int(ride["fee"] or 0)
+                is_minicar = (
+                    ride["vehicle"] == "Minicar 14 places"
+                )
 
-                # Commission SoninkaraGo = 10 %
-                commission = (fare + 9) // 10
+                driver = conn.execute(
+                    """
+                    SELECT balance
+                    FROM drivers
+                    WHERE id=%s
+                    FOR UPDATE
+                    """,
+                    (driver_id,)
+                ).fetchone()
 
-                # Vérifier le solde et prélever les 10 %
+                balance = int(
+                    driver["balance"] or 0
+                ) if driver else 0
+
+                if balance < commission:
+                    return self.sendj(
+                        {
+                            "error":
+                            f"Solde insuffisant. Vous devez avoir au moins {commission} F.",
+                            "required": commission,
+                            "balance": balance
+                        },
+                        402
+                    )
+
+                # Pour les courses ordinaires :
+                # commission retirée immédiatement.
+                if not is_minicar:
+                    conn.execute(
+                        """
+                        UPDATE drivers
+                        SET balance=balance-%s
+                        WHERE id=%s
+                        """,
+                        (commission, driver_id)
+                    )
+
+                cur = conn.execute(
+                    """
+                    UPDATE rides
+                    SET
+                        status='accepted',
+                        driver_name=%s,
+                        driver_id=%s,
+                        commission_charged=%s
+                    WHERE id=%s
+                      AND status='searching'
+                    """,
+                    (
+                        user.get("name", "Chauffeur"),
+                        driver_id,
+                        not is_minicar,
+                        ride_id
+                    )
+                )
+
+                if not cur.rowcount:
+                    return self.sendj(
+                        {"error": "Course déjà prise"},
+                        409
+                    )
+
+            return self.sendj({
+                "ok": True,
+                "commission": commission,
+                "commission_charged": not is_minicar,
+                "message": (
+                    "Réservation acceptée. Confirmez les premiers 50 % après réception."
+                    if is_minicar
+                    else "Course acceptée."
+                )
+            })
+        # CONFIRMATION DES PREMIERS 50 %
+        if (
+            path.startswith("/api/rides/")
+            and path.endswith("/confirm-deposit")
+        ):
+
+            user = self.auth()
+
+            if (
+                not user
+                or user.get("role") != "driver"
+            ):
+                return self.sendj(
+                    {"error": "Connexion chauffeur requise"},
+                    401
+                )
+
+            ride_id = path.split("/")[3]
+            driver_id = user.get("driver_id")
+
+            with db() as conn:
+
+                ride = conn.execute(
+                    """
+                    SELECT *
+                    FROM rides
+                    WHERE id=%s
+                    FOR UPDATE
+                    """,
+                    (ride_id,)
+                ).fetchone()
+
+                if not ride:
+                    return self.sendj(
+                        {"error": "Réservation introuvable"},
+                        404
+                    )
+
+                if ride["driver_id"] != driver_id:
+                    return self.sendj(
+                        {"error": "Cette réservation ne vous appartient pas"},
+                        403
+                    )
+
+                if ride["vehicle"] != "Minicar 14 places":
+                    return self.sendj(
+                        {"error": "Cette course n'est pas un minicar"},
+                        400
+                    )
+
+                if ride["commission_charged"]:
+                    return self.sendj(
+                        {"error": "Premier paiement déjà confirmé"},
+                        409
+                    )
+
+                if ride["status"] != "accepted":
+                    return self.sendj(
+                        {"error": "Réservation non acceptée"},
+                        409
+                    )
+
+                commission = int(ride["fee"] or 0)
+
                 debit = conn.execute(
                     """
                     UPDATE drivers
-                    SET balance = COALESCE(balance, 0) - %s
+                    SET balance=balance-%s
                     WHERE id=%s
-                      AND COALESCE(balance, 0) >= %s
+                      AND balance >= %s
                     """,
                     (
                         commission,
@@ -1401,47 +1773,116 @@ class App(SimpleHTTPRequestHandler):
                 if not debit.rowcount:
                     return self.sendj(
                         {
-                            "error": "Solde insuffisant",
-                            "required": commission
+                            "error":
+                            f"Solde insuffisant. Il faut {commission} F."
                         },
                         402
                     )
 
-                # Attribuer la course au chauffeur
-                cur = conn.execute(
+                conn.execute(
                     """
                     UPDATE rides
                     SET
-                        status='accepted',
-                        driver_name=%s,
-                        driver_id=%s
+                        status='deposit_paid',
+                        payment_status='deposit_paid',
+                        commission_charged=TRUE,
+                        deposit_paid_at=%s
                     WHERE id=%s
-                      AND status='searching'
                     """,
                     (
-                        user.get("name", "Chauffeur"),
-                        driver_id,
+                        int(time.time()),
                         ride_id
                     )
                 )
 
-                if not cur.rowcount:
+            return self.sendj({
+                "ok": True,
+                "deposit_amount": int(
+                    ride["deposit_amount"] or 0
+                ),
+                "commission": commission,
+                "message":
+                "Premier paiement confirmé. Commission SoninkaraGo retirée."
+            })
+
+
+        # CONFIRMATION DES 50 % RESTANTS
+        if (
+            path.startswith("/api/rides/")
+            and path.endswith("/confirm-balance")
+        ):
+
+            user = self.auth()
+
+            if (
+                not user
+                or user.get("role") != "driver"
+            ):
+                return self.sendj(
+                    {"error": "Connexion chauffeur requise"},
+                    401
+                )
+
+            ride_id = path.split("/")[3]
+            driver_id = user.get("driver_id")
+
+            with db() as conn:
+
+                ride = conn.execute(
+                    """
+                    SELECT *
+                    FROM rides
+                    WHERE id=%s
+                    FOR UPDATE
+                    """,
+                    (ride_id,)
+                ).fetchone()
+
+                if not ride:
+                    return self.sendj(
+                        {"error": "Réservation introuvable"},
+                        404
+                    )
+
+                if ride["driver_id"] != driver_id:
+                    return self.sendj(
+                        {"error": "Cette réservation ne vous appartient pas"},
+                        403
+                    )
+
+                if ride["payment_status"] != "deposit_paid":
                     return self.sendj(
                         {
-                            "error": "Course déjà prise"
+                            "error":
+                            "Confirmez d'abord les premiers 50 %."
                         },
                         409
                     )
 
-            return self.sendj(
-                {
-                    "ok": True,
-                    "commission": commission
-                }
-            )
+                conn.execute(
+                    """
+                    UPDATE rides
+                    SET
+                        status='fully_paid',
+                        payment_status='fully_paid',
+                        balance_paid_at=%s
+                    WHERE id=%s
+                    """,
+                    (
+                        int(time.time()),
+                        ride_id
+                    )
+                )
 
+            return self.sendj({
+                "ok": True,
+                "balance_paid": int(
+                    ride["balance_due"] or 0
+                ),
+                "message": "Paiement total confirmé."
+            })
 
-        # CHAUFFEUR TERMINE COURSE
+        
 
 
         # CHAUFFEUR TERMINE COURSE
@@ -1467,31 +1908,39 @@ class App(SimpleHTTPRequestHandler):
             ride_id = path.split("/")[3]
 
             with db() as conn:
-                cur = conn.execute(
+                                cur = conn.execute(
                     """
                     UPDATE rides
                     SET status='completed'
                     WHERE
                         id=%s
-                        AND status='accepted'
-                        AND driver_name=%s
+                        AND driver_id=%s
+                        AND (
+                            (
+                                vehicle='Minicar 14 places'
+                                AND payment_status='fully_paid'
+                            )
+                            OR
+                            (
+                                vehicle<>'Minicar 14 places'
+                                AND status='accepted'
+                            )
+                        )
                     """,
                     (
                         ride_id,
-                        user.get(
-                            "name",
-                            ""
-                        )
+                        user.get("driver_id")
                     )
                 )
+                )
 
-            if not cur.rowcount:
+                        if not cur.rowcount:
                 return self.sendj(
                     {
                         "error":
-                        "Cette course ne vous appartient pas"
+                        "Pour un minicar, confirmez les deux paiements avant de terminer."
                     },
-                    403
+                    409
                 )
 
             return self.sendj({
