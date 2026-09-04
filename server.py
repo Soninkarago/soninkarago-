@@ -1067,7 +1067,7 @@ class App(SimpleHTTPRequestHandler):
                     SELECT
                         COUNT(*) AS n,
                         COALESCE(SUM(fare),0) AS volume,
-                        COALESCE(SUM(fee),0) AS fees
+                        COALESCE(SUM(fee) FILTER (WHERE commission_charged=TRUE),0) AS fees
                     FROM rides
                 """).fetchone()
 
