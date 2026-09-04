@@ -1124,6 +1124,13 @@ localStorage.setItem(
 trackingToken
 );
 
+if(r.payment_url){
+  $('#orderSuccess').textContent =
+    'Redirection vers le paiement sécurisé PayTech…';
+  window.location.href = r.payment_url;
+  return;
+}
+
 if(trackingToken){
     $('#clientGpsBtn').classList.remove('hidden');
 }
