@@ -1,5 +1,5 @@
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 import json
 import os
 import time
@@ -19,6 +19,8 @@ PORT = int(os.environ.get("PORT", "10000"))
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 AUTH_SECRET = os.environ.get("AUTH_SECRET", "")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+PAYTECH_API_KEY = os.environ.get("PAYTECH_API_KEY", "")
+PAYTECH_API_SECRET = os.environ.get("PAYTECH_API_SECRET", "")
 
 
 ROUTES = {
@@ -663,12 +665,45 @@ class App(SimpleHTTPRequestHandler):
             if not length:
                 return {}
 
-            return json.loads(
-                self.rfile.read(length).decode()
-            )
+            raw = self.rfile.read(length).decode()
+            content_type = self.headers.get("Content-Type", "")
+
+            if "application/x-www-form-urlencoded" in content_type:
+                return {
+                    key: values[-1] if values else ""
+                    for key, values in parse_qs(raw).items()
+                }
+
+            return json.loads(raw)
 
         except Exception:
             return {}
+
+
+    def send_html(self, title, message, status=200):
+        body = (
+            "<!doctype html><html lang='fr'><head>"
+            "<meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            f"<title>{title} - SoninkaraGo</title>"
+            "<style>body{margin:0;background:#f5f7f5;font-family:Arial,sans-serif;"
+            "display:grid;place-items:center;min-height:100vh;color:#173b2c}"
+            ".card{background:#fff;max-width:520px;margin:20px;padding:32px;"
+            "border-radius:18px;box-shadow:0 10px 35px #0002;text-align:center}"
+            "h1{margin-top:0}a{display:inline-block;margin-top:18px;padding:12px 20px;"
+            "border-radius:10px;background:#078848;color:#fff;text-decoration:none}</style>"
+            f"</head><body><main class='card'><h1>{title}</h1><p>{message}</p>"
+            "<a href='/'>Retour à SoninkaraGo</a></main></body></html>"
+        ).encode()
+
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.end_headers()
+        self.wfile.write(body)
 
 
     def auth(self):
@@ -717,6 +752,16 @@ class App(SimpleHTTPRequestHandler):
 
         if path in ("/", "/index.html"):
             return self.serve_index()
+        if path == "/paiement/succes":
+            return self.send_html(
+                "Paiement réussi",
+                "Votre paiement a bien été reçu. Votre réservation sera confirmée automatiquement."
+            )
+        if path == "/paiement/annule":
+            return self.send_html(
+                "Paiement annulé",
+                "Le paiement n'a pas été effectué. Vous pouvez revenir à l'accueil et réessayer."
+            )
         if path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico")):
             file_path = os.path.join(ROOT, path.lstrip("/"))
 
@@ -1042,6 +1087,61 @@ class App(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         data = self.body()
+        if path == "/api/paytech/ipn":
+            if not PAYTECH_API_KEY or not PAYTECH_API_SECRET:
+                return self.sendj({"error": "PayTech non configuré"}, 503)
+
+            ref_command = str(data.get("ref_command", "")).strip()
+            item_price = str(data.get("item_price", "")).strip()
+            received_hmac = str(data.get("hmac_compute", "")).strip().lower()
+            message = f"{item_price}|{ref_command}|{PAYTECH_API_KEY}"
+            expected_hmac = hmac.new(
+                PAYTECH_API_SECRET.encode(),
+                message.encode(),
+                hashlib.sha256
+            ).hexdigest()
+
+            if not received_hmac or not hmac.compare_digest(received_hmac, expected_hmac):
+                return self.sendj({"error": "Signature IPN invalide"}, 403)
+
+            event = str(data.get("type_event", "")).strip()
+
+            with db() as conn:
+                ride = conn.execute(
+                    "SELECT id, fare, deposit_amount FROM rides WHERE id=%s FOR UPDATE",
+                    (ref_command,)
+                ).fetchone()
+
+                if not ride:
+                    return self.sendj({"error": "Réservation introuvable"}, 404)
+
+                try:
+                    paid_amount = int(float(item_price))
+                except (TypeError, ValueError):
+                    return self.sendj({"error": "Montant invalide"}, 400)
+
+                expected_amount = int(ride["deposit_amount"] or ride["fare"])
+                if paid_amount != expected_amount:
+                    return self.sendj({"error": "Montant incorrect"}, 409)
+
+                if event == "sale_complete":
+                    conn.execute(
+                        """
+                        UPDATE rides
+                        SET payment_status=%s, deposit_paid_at=%s
+                        WHERE id=%s AND payment_status='unpaid'
+                        """,
+                        (
+                            "deposit_paid" if int(ride["deposit_amount"] or 0) else "fully_paid",
+                            int(time.time()),
+                            ref_command
+                        )
+                    )
+                elif event != "sale_canceled":
+                    return self.sendj({"error": "Événement IPN inconnu"}, 400)
+
+            return self.sendj({"ok": True})
+
         # RECHARGE COMPTE CHAUFFEUR
         if path == "/api/driver/recharge":
 
