@@ -7,10 +7,14 @@
 <link
   rel="stylesheet"
   href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  media="print"
+  onload="this.media='all'"
 />
+<noscript><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"></noscript>
 
 <script
-  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  defer>
 </script>
 <style>
 body{
@@ -546,7 +550,7 @@ Aucune course.
       et voyagez en toute confiance.
     </p>
 
-  <img src="IMG_0421.png" alt="Flyer SoninkaraGo">
+  <img src="IMG_0421.png" alt="Flyer SoninkaraGo" decoding="async" fetchpriority="high">
   </div>
 
   <div class="sponsors-zone">
@@ -555,15 +559,15 @@ Aucune course.
     <div class="sponsors-grid">
 
       <div class="sponsor-card">
-        <img src="IMG_0420.png" alt="SA78 Service Accompagnement78">
+        <img src="IMG_0420.png" alt="SA78 Service Accompagnement78" loading="lazy" decoding="async">
       </div>
 
       <div class="sponsor-card">
-       <img src="IMG_0317.png" alt="20 Vainqueurs Moudéry">
+       <img src="IMG_0317.png" alt="20 Vainqueurs Moudéry" loading="lazy" decoding="async">
       </div>
 
       <div class="sponsor-card">
-      <img src="IMG_1212.jpeg" alt="QPLV">
+      <img src="IMG_1212.jpeg" alt="QPLV" loading="lazy" decoding="async">
       </div>
 
     </div>
