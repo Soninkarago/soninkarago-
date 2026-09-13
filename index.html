@@ -3,7 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Réservez un trajet SoninkaraGo à Moudéry, Bondji, Diawara, Bakel et sur les lignes interurbaines.">
+<meta name="theme-color" content="#006b3c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SoninkaraGo">
 <title>SoninkaraGo</title>
+<link rel="canonical" href="https://soninkarago.sn/">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="icon" href="/icon-192.png">
 <link
   rel="stylesheet"
   href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -245,6 +254,24 @@ button{
     aspect-ratio:4 / 3;
   }
 }
+.app-actions{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  margin:12px 0 18px;
+}
+.app-actions button{flex:1;min-width:180px}
+.danger{
+  background:#8d1720;
+  color:#fff;
+  margin-top:18px;
+}
+.site-footer{
+  padding:24px 8px 10px;
+  text-align:center;
+  font-size:14px;
+}
+.site-footer a{color:#fff;margin:0 8px}
 </style>
 </head>
 
@@ -257,6 +284,11 @@ DAKAR • MOUDÉRY • BONDJI • DIAWARA • BAKEL • KHADÉ BÉRÉ • WAOUND
 </small>
   <h1>SoninkaraGo</h1>
   <p>Votre trajet, en toute confiance.</p>
+</div>
+
+<div class="app-actions">
+  <button id="installApp">📲 Installer SoninkaraGo</button>
+  <button id="enableNotifications">🔔 Activer les notifications</button>
 </div>
 
 <div class="nav main-nav">
@@ -685,6 +717,9 @@ Hors ligne
 <div id="driverMap"></div>
 
 </div>
+<button id="deleteDriverAccount" class="danger">
+Supprimer définitivement mon compte
+</button>
 </div>
 </section>
 
@@ -738,12 +773,66 @@ Déconnexion
 </div>
 </section>
 
+<footer class="site-footer">
+  <a href="/confidentialite">Confidentialité</a>
+  <a href="/conditions">Conditions d’utilisation</a>
+  <p>© 2026 SoninkaraGo — Votre trajet, en toute confiance.</p>
+</footer>
+
 </div>
 
 <script>
 
 const $=s=>document.querySelector(s);
 const $$=s=>document.querySelectorAll(s);
+
+let installPrompt=null;
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('/service-worker.js').catch(()=>{});
+  });
+}
+
+window.addEventListener('beforeinstallprompt',event=>{
+  event.preventDefault();
+  installPrompt=event;
+});
+
+$('#installApp').onclick=async()=>{
+  if(installPrompt){
+    installPrompt.prompt();
+    await installPrompt.userChoice;
+    installPrompt=null;
+    return;
+  }
+  alert(
+    /iphone|ipad|ipod/i.test(navigator.userAgent)
+      ? 'Sur iPhone : appuyez sur le bouton Partager, puis « Sur l’écran d’accueil ».'
+      : 'Ouvrez le menu du navigateur puis choisissez « Installer l’application » ou « Ajouter à l’écran d’accueil ».'
+  );
+};
+
+$('#enableNotifications').onclick=async()=>{
+  if(!('Notification' in window)){
+    alert('Les notifications ne sont pas disponibles sur ce navigateur.');
+    return;
+  }
+  const permission=await Notification.requestPermission();
+  alert(permission==='granted'
+    ? 'Notifications activées.'
+    : 'Notifications non autorisées. Vous pouvez les activer dans les réglages du téléphone.');
+};
+
+async function notifyUser(title,body){
+  if(!('Notification' in window) || Notification.permission!=='granted') return;
+  const registration=await navigator.serviceWorker?.ready;
+  if(registration){
+    registration.showNotification(title,{body,icon:'/icon-192.png',badge:'/icon-192.png'});
+  }else{
+    new Notification(title,{body,icon:'/icon-192.png'});
+  }
+}
 /* NAVIGATION CLIENT / CHAUFFEUR / ADMIN */
 
 function openPage(page){
@@ -867,6 +956,7 @@ let adminToken=sessionStorage.getItem('adminToken')||'';
 let currentDriver=sessionStorage.getItem('driverName')||'';
 let trackingToken =
 localStorage.getItem('trackingToken') || '';
+let lastKnownRideStatus='';
 
 let activeDriverRide = null;
 
@@ -1161,8 +1251,22 @@ return;
 try{
 
 const r=await get(
-'/rides/'+encodeURIComponent(lastRide)
+'/rides/'+encodeURIComponent(lastRide)+
+'?token='+encodeURIComponent(trackingToken)
 );
+
+if(r.status!==lastKnownRideStatus){
+  if(r.status==='accepted'){
+    notifyUser(
+      'Chauffeur trouvé',
+      (r.driver_name ? r.driver_name+' a accepté votre course.' : 'Votre course a été acceptée.')
+    );
+  }
+  if(r.status==='completed'){
+    notifyUser('Course terminée','Merci d’avoir utilisé SoninkaraGo.');
+  }
+  lastKnownRideStatus=r.status;
+}
 
 let label=r.status;
 
@@ -1323,6 +1427,29 @@ $('#driverLogin').classList.remove('hidden');
 
 
 $('#driverLogout').onclick=driverLogout;
+
+$('#deleteDriverAccount').onclick=async()=>{
+  const confirmed=confirm(
+    'Cette action supprimera définitivement votre compte chauffeur. Continuer ?'
+  );
+  if(!confirmed) return;
+
+  const pin=prompt('Saisissez votre code PIN pour confirmer :');
+  if(!pin) return;
+
+  try{
+    const result=await post(
+      '/driver/account/delete',
+      {pin},
+      driverToken
+    );
+    alert(result.message || 'Compte supprimé.');
+    driverLogout();
+  }catch(error){
+    alert(error.message);
+  }
+};
+
   $('#driverRechargeBtn').onclick = async () => {
 
   const amount = prompt(

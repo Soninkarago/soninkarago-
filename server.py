@@ -10,6 +10,8 @@ import hashlib
 import base64
 import secrets
 import mimetypes
+import threading
+from collections import defaultdict, deque
 import psycopg
 from psycopg.rows import dict_row
 
@@ -28,6 +30,37 @@ PUBLIC_BASE_URL = os.environ.get(
     "PUBLIC_BASE_URL",
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
+
+APP_VERSION = "2026.09.13-security"
+RATE_LIMITS = defaultdict(deque)
+RATE_LIMIT_LOCK = threading.Lock()
+
+
+def allow_request(key, limit, window_seconds):
+    """Small in-memory abuse guard for login and public write endpoints."""
+    now = time.time()
+    cutoff = now - window_seconds
+
+    with RATE_LIMIT_LOCK:
+        attempts = RATE_LIMITS[key]
+        while attempts and attempts[0] < cutoff:
+            attempts.popleft()
+
+        if len(attempts) >= limit:
+            return False
+
+        attempts.append(now)
+
+        # Prevent unbounded memory use from forged client identifiers.
+        if len(RATE_LIMITS) > 10000:
+            stale = [
+                item_key for item_key, values in RATE_LIMITS.items()
+                if not values or values[-1] < now - 86400
+            ]
+            for item_key in stale[:2000]:
+                RATE_LIMITS.pop(item_key, None)
+
+    return True
 
 
 def request_paytech_payment(ride_id, route, amount, payment, client_name):
@@ -450,7 +483,7 @@ ALLOWED_VILLAGES = [
 ALLOWED_VEHICLES = [
     "Moto-taxi",
     "3 roues",
-    "Voiture taxi"
+    "Voiture taxi",
     "Minicar 14 places"
 ]
 
@@ -748,6 +781,63 @@ def valid_coords(lat, lng):
 
 class App(SimpleHTTPRequestHandler):
 
+    def security_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=(self), payment=(self)"
+        )
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://unpkg.com; "
+            "style-src 'self' 'unsafe-inline' https://unpkg.com; "
+            "img-src 'self' data: https://*.tile.openstreetmap.org; "
+            "connect-src 'self'; font-src 'self'; object-src 'none'; "
+            "base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+        )
+        self.send_header(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains"
+        )
+
+    def client_ip(self):
+        return (
+            self.headers.get("CF-Connecting-IP")
+            or self.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or self.client_address[0]
+        )
+
+    def check_rate(self, action, limit, window_seconds, identity=""):
+        key = f"{action}:{self.client_ip()}:{identity[:80]}"
+        if allow_request(key, limit, window_seconds):
+            return True
+        self.sendj(
+            {"error": "Trop de tentatives. Réessayez plus tard."},
+            429
+        )
+        return False
+
+    def serve_static(self, filename, cache_seconds=3600):
+        safe_name = os.path.basename(filename)
+        file_path = os.path.join(ROOT, safe_name)
+        if not os.path.isfile(file_path):
+            return self.sendj({"error": "Introuvable"}, 404)
+
+        content_type, _ = mimetypes.guess_type(file_path)
+        with open(file_path, "rb") as stream:
+            data = stream.read()
+
+        self.send_response(200)
+        self.send_header("Content-Type", content_type or "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", f"public, max-age={cache_seconds}")
+        self.security_headers()
+        self.end_headers()
+        self.wfile.write(data)
+
     def sendj(self, obj, status=200):
         body = json.dumps(
             obj,
@@ -771,15 +861,7 @@ class App(SimpleHTTPRequestHandler):
             "no-store"
         )
 
-        self.send_header(
-            "X-Content-Type-Options",
-            "nosniff"
-        )
-
-        self.send_header(
-            "X-Frame-Options",
-            "DENY"
-        )
+        self.security_headers()
 
         self.end_headers()
 
@@ -836,8 +918,7 @@ class App(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
+        self.security_headers()
         self.end_headers()
         self.wfile.write(body)
 
@@ -865,15 +946,8 @@ class App(SimpleHTTPRequestHandler):
                 str(len(body))
             )
 
-            self.send_header(
-                "X-Content-Type-Options",
-                "nosniff"
-            )
-
-            self.send_header(
-                "X-Frame-Options",
-                "DENY"
-            )
+            self.send_header("Cache-Control", "no-cache")
+            self.security_headers()
 
             self.end_headers()
 
@@ -898,29 +972,33 @@ class App(SimpleHTTPRequestHandler):
                 "Paiement annulé",
                 "Le paiement n'a pas été effectué. Vous pouvez revenir à l'accueil et réessayer."
             )
+        static_pages = {
+            "/confidentialite": "confidentialite.html",
+            "/conditions": "conditions.html",
+            "/manifest.webmanifest": "manifest.webmanifest",
+            "/service-worker.js": "service-worker.js",
+        }
+        if path in static_pages:
+            cache_seconds = 0 if path in ("/confidentialite", "/conditions") else 3600
+            return self.serve_static(static_pages[path], cache_seconds)
         if path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico")):
-            file_path = os.path.join(ROOT, path.lstrip("/"))
-
-            if not os.path.isfile(file_path):
-                return self.sendj({"error": "Introuvable"}, 404)
-
-            content_type, _ = mimetypes.guess_type(file_path)
-            if not content_type:
-                content_type = "application/octet-stream"
-
-            with open(file_path, "rb") as f:
-                data = f.read()
-
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            return
+            return self.serve_static(path.lstrip("/"), 86400)
         if path == "/api/health":
+            try:
+                with db() as conn:
+                    conn.execute("SELECT 1").fetchone()
+            except psycopg.Error:
+                return self.sendj({
+                    "ok": False,
+                    "database": "unavailable",
+                    "version": APP_VERSION
+                }, 503)
             return self.sendj({
                 "ok": True,
-                "database": "postgresql"
+                "database": "postgresql",
+                "paytech": bool(PAYTECH_API_KEY and PAYTECH_API_SECRET),
+                "payment_environment": PAYTECH_ENV,
+                "version": APP_VERSION
             })
 
         # Client : suivi de sa course
@@ -951,6 +1029,14 @@ class App(SimpleHTTPRequestHandler):
                     {"error": "Course introuvable"},
                     404
                 )
+
+            query = parse_qs(urlparse(self.path).query)
+            token = str(query.get("token", [""])[-1])
+            if not token or not hmac.compare_digest(
+                str(row.get("tracking_token") or ""),
+                token
+            ):
+                return self.sendj({"error": "Non autorisé"}, 401)
 
             # Ne renvoyer au client que les informations utiles au suivi.
             # L'utilisation de get() garde cette route compatible avec les
@@ -1365,6 +1451,11 @@ class App(SimpleHTTPRequestHandler):
                     401
                 )
 
+            if not self.check_rate(
+                "driver-recharge", 10, 3600, str(user.get("driver_id", ""))
+            ):
+                return
+
             try:
                 amount = int(data.get("amount", 0))
             except:
@@ -1434,6 +1525,11 @@ class App(SimpleHTTPRequestHandler):
 
         # INSCRIPTION CHAUFFEUR
         if path == "/api/register/driver":
+
+            if not self.check_rate(
+                "driver-register", 5, 3600, str(data.get("phone", ""))
+            ):
+                return
 
             name = str(
                 data.get("name", "")
@@ -1575,6 +1671,11 @@ class App(SimpleHTTPRequestHandler):
         # CONNEXION CHAUFFEUR
         if path == "/api/login/driver":
 
+            if not self.check_rate(
+                "driver-login", 8, 600, str(data.get("phone", ""))
+            ):
+                return
+
             phone = str(
                 data.get("phone", "")
             ).strip()
@@ -1668,8 +1769,74 @@ class App(SimpleHTTPRequestHandler):
             })
 
 
+        # SUPPRESSION DU COMPTE CHAUFFEUR ET ANONYMISATION
+        if path == "/api/driver/account/delete":
+            user = self.auth()
+            if not user or user.get("role") != "driver":
+                return self.sendj(
+                    {"error": "Connexion chauffeur requise"},
+                    401
+                )
+
+            driver_id = str(user.get("driver_id", ""))
+            if not self.check_rate("driver-delete", 3, 3600, driver_id):
+                return
+
+            pin = str(data.get("pin", "")).strip()
+            with db() as conn:
+                driver = conn.execute(
+                    "SELECT * FROM drivers WHERE id=%s FOR UPDATE",
+                    (driver_id,)
+                ).fetchone()
+
+                if not driver or not verify_pin(
+                    pin,
+                    driver["pin_hash"],
+                    driver["pin_salt"]
+                ):
+                    return self.sendj({"error": "PIN incorrect"}, 401)
+
+                active = conn.execute(
+                    """
+                    SELECT COUNT(*) AS n
+                    FROM rides
+                    WHERE driver_id=%s AND status='accepted'
+                    """,
+                    (driver_id,)
+                ).fetchone()
+                if int(active["n"] or 0) > 0:
+                    return self.sendj({
+                        "error": "Terminez votre course active avant de supprimer le compte."
+                    }, 409)
+
+                conn.execute(
+                    "DELETE FROM driver_recharges WHERE driver_id=%s",
+                    (driver_id,)
+                )
+                conn.execute(
+                    """
+                    UPDATE rides
+                    SET driver_id=NULL, driver_name='Compte supprimé'
+                    WHERE driver_id=%s
+                    """,
+                    (driver_id,)
+                )
+                conn.execute(
+                    "DELETE FROM drivers WHERE id=%s",
+                    (driver_id,)
+                )
+
+            return self.sendj({
+                "ok": True,
+                "message": "Votre compte et vos données chauffeur ont été supprimés."
+            })
+
+
         # CONNEXION ADMIN
         if path == "/api/login/admin":
+
+            if not self.check_rate("admin-login", 5, 900):
+                return
 
             password = str(
                 data.get(
@@ -1792,6 +1959,11 @@ class App(SimpleHTTPRequestHandler):
 
               # CRÉATION COURSE CLIENT
         if path == "/api/rides":
+
+            if not self.check_rate(
+                "ride-create", 30, 3600, str(data.get("phone", ""))
+            ):
+                return
 
             route_code = str(
                 data.get("route_code", "")
