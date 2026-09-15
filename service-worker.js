@@ -1,4 +1,4 @@
-const CACHE_NAME='soninkarago-v3';
+const CACHE_NAME='soninkarago-v4';
 const APP_SHELL=[
   '/',
   '/index.html',
@@ -7,7 +7,9 @@ const APP_SHELL=[
   '/icon-512.png',
   '/IMG_0421.png',
   '/confidentialite',
-  '/conditions'
+  '/conditions',
+  '/mentions-legales',
+  '/suppression-compte'
 ];
 
 self.addEventListener('install',event=>{
