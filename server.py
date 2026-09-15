@@ -975,11 +975,13 @@ class App(SimpleHTTPRequestHandler):
         static_pages = {
             "/confidentialite": "confidentialite.html",
             "/conditions": "conditions.html",
+            "/mentions-legales": "mentions-legales.html",
+            "/suppression-compte": "suppression-compte.html",
             "/manifest.webmanifest": "manifest.webmanifest",
             "/service-worker.js": "service-worker.js",
         }
         if path in static_pages:
-            cache_seconds = 0 if path in ("/confidentialite", "/conditions") else 3600
+            cache_seconds = 0 if path in ("/confidentialite", "/conditions", "/mentions-legales", "/suppression-compte") else 3600
             return self.serve_static(static_pages[path], cache_seconds)
         if path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico")):
             return self.serve_static(path.lstrip("/"), 86400)
