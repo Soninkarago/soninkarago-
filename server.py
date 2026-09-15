@@ -11,6 +11,7 @@ import base64
 import secrets
 import mimetypes
 import threading
+import math
 from collections import defaultdict, deque
 import psycopg
 from psycopg.rows import dict_row
@@ -31,7 +32,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.09.13-security"
+APP_VERSION = "2026.09.15-nearest-dispatch"
 RATE_LIMITS = defaultdict(deque)
 RATE_LIMIT_LOCK = threading.Lock()
 
@@ -614,6 +615,22 @@ def init():
 
         conn.execute("""
             ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS offered_driver_id TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS offer_expires_at BIGINT
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS offer_attempts TEXT
+            NOT NULL DEFAULT ''
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
             ADD COLUMN IF NOT EXISTS deposit_paid_at BIGINT
         """)
 
@@ -778,6 +795,129 @@ def valid_coords(lat, lng):
 
     except (TypeError, ValueError):
         return None
+
+
+def distance_km(lat1, lng1, lat2, lng2):
+    """Distance à vol d'oiseau entre deux positions GPS."""
+    radius = 6371.0
+    p1 = math.radians(float(lat1))
+    p2 = math.radians(float(lat2))
+    dp = math.radians(float(lat2) - float(lat1))
+    dl = math.radians(float(lng2) - float(lng1))
+    value = (
+        math.sin(dp / 2) ** 2
+        + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    )
+    return radius * 2 * math.atan2(math.sqrt(value), math.sqrt(1 - value))
+
+
+def assign_next_driver(conn, ride_id, now=None):
+    """Réserve une course pendant 15 secondes au chauffeur éligible le plus proche."""
+    now = int(now or time.time())
+    ride = conn.execute(
+        """
+        SELECT id, vehicle, fee, status, client_lat, client_lng,
+               offered_driver_id, offer_expires_at, offer_attempts
+        FROM rides
+        WHERE id=%s
+        FOR UPDATE
+        """,
+        (ride_id,)
+    ).fetchone()
+
+    if not ride or ride["status"] != "searching":
+        return None
+
+    # Les minicars planifiés conservent le fonctionnement de réservation.
+    if ride["vehicle"] == "Minicar 14 places":
+        return None
+
+    if ride["client_lat"] is None or ride["client_lng"] is None:
+        return None
+
+    if (
+        ride.get("offered_driver_id")
+        and int(ride.get("offer_expires_at") or 0) > now
+    ):
+        return ride["offered_driver_id"]
+
+    attempted = {
+        item for item in str(ride.get("offer_attempts") or "").split(",")
+        if item
+    }
+
+    drivers = conn.execute(
+        """
+        SELECT d.id, d.latitude, d.longitude
+        FROM drivers d
+        WHERE d.status='approved'
+          AND d.online=TRUE
+          AND d.vehicle=%s
+          AND d.latitude IS NOT NULL
+          AND d.longitude IS NOT NULL
+          AND COALESCE(d.last_location_at, 0) >= %s
+          AND d.balance >= %s
+          AND NOT EXISTS (
+              SELECT 1 FROM rides active
+              WHERE active.driver_id=d.id
+                AND active.status='accepted'
+          )
+        """,
+        (ride["vehicle"], now - 300, int(ride["fee"] or 0))
+    ).fetchall()
+
+    eligible = [driver for driver in drivers if driver["id"] not in attempted]
+    if not eligible:
+        conn.execute(
+            """
+            UPDATE rides
+            SET offered_driver_id=NULL, offer_expires_at=NULL
+            WHERE id=%s AND status='searching'
+            """,
+            (ride_id,)
+        )
+        return None
+
+    nearest = min(
+        eligible,
+        key=lambda driver: distance_km(
+            ride["client_lat"], ride["client_lng"],
+            driver["latitude"], driver["longitude"]
+        )
+    )
+    attempted.add(nearest["id"])
+    conn.execute(
+        """
+        UPDATE rides
+        SET offered_driver_id=%s,
+            offer_expires_at=%s,
+            offer_attempts=%s
+        WHERE id=%s AND status='searching'
+        """,
+        (nearest["id"], now + 15, ",".join(sorted(attempted)), ride_id)
+    )
+    return nearest["id"]
+
+
+def dispatch_pending_rides(conn):
+    """Fait avancer les offres expirées vers le chauffeur suivant."""
+    now = int(time.time())
+    rides = conn.execute(
+        """
+        SELECT id
+        FROM rides
+        WHERE status='searching'
+          AND vehicle<>'Minicar 14 places'
+          AND client_lat IS NOT NULL
+          AND client_lng IS NOT NULL
+          AND (offered_driver_id IS NULL OR COALESCE(offer_expires_at, 0) <= %s)
+        ORDER BY created_at ASC
+        LIMIT 100
+        """,
+        (now,)
+    ).fetchall()
+    for ride in rides:
+        assign_next_driver(conn, ride["id"], now)
 
 class App(SimpleHTTPRequestHandler):
 
@@ -1081,6 +1221,8 @@ class App(SimpleHTTPRequestHandler):
                     ).fetchall()
 
                 else:
+                    dispatch_pending_rides(conn)
+                    now = int(time.time())
                     rows = conn.execute(
                         """
                         SELECT
@@ -1094,21 +1236,36 @@ class App(SimpleHTTPRequestHandler):
                             fee,
                             status,
                             driver_name,
-                            created_at
+                            created_at,
+                            offer_expires_at
                         FROM rides
                         WHERE
-                            status='searching'
+                            (
+                                status='searching'
+                                AND (
+                                    (
+                                        vehicle='Minicar 14 places'
+                                        AND vehicle=(
+                                            SELECT vehicle FROM drivers WHERE id=%s
+                                        )
+                                    )
+                                    OR (
+                                        offered_driver_id=%s
+                                        AND COALESCE(offer_expires_at, 0) > %s
+                                    )
+                                )
+                            )
                             OR (
                                 status='accepted'
-                                AND driver_name=%s
+                                AND driver_id=%s
                             )
                         ORDER BY created_at DESC
                         """,
                         (
-                            user.get(
-                                "name",
-                                ""
-                            ),
+                            user.get("driver_id"),
+                            user.get("driver_id"),
+                            now,
+                            user.get("driver_id"),
                         )
                     ).fetchall()
 
@@ -2072,6 +2229,18 @@ class App(SimpleHTTPRequestHandler):
                 data.get("booking_note", "")
             ).strip()[:300]
 
+            client_coords = valid_coords(
+                data.get("client_lat"),
+                data.get("client_lng")
+            )
+            if not is_minicar and not client_coords:
+                return self.sendj(
+                    {"error": "Activez votre position GPS pour trouver le chauffeur le plus proche"},
+                    400
+                )
+            client_lat, client_lng = client_coords or (None, None)
+
+            assigned_driver = None
             with db() as conn:
                 conn.execute(
                     """
@@ -2087,6 +2256,8 @@ class App(SimpleHTTPRequestHandler):
                         fee,
                         status,
                         driver_name,
+                        client_lat,
+                        client_lng,
                         created_at,
                         tracking_token,
                         route_code,
@@ -2105,7 +2276,8 @@ class App(SimpleHTTPRequestHandler):
                         %s,%s,%s,%s,%s,%s,
                         %s,%s,%s,%s,%s,%s,
                         %s,%s,%s,%s,%s,%s,
-                        %s,%s,%s,%s,%s,%s
+                        %s,%s,%s,%s,%s,%s,
+                        %s,%s
                     )
                     """,
                     (
@@ -2120,6 +2292,8 @@ class App(SimpleHTTPRequestHandler):
                         fee,
                         "awaiting_payment" if mobile_payment else "searching",
                         "",
+                        client_lat,
+                        client_lng,
                         int(time.time()),
                         tracking_token,
                         route_code,
@@ -2135,6 +2309,8 @@ class App(SimpleHTTPRequestHandler):
                         False
                     )
                 )
+                if not mobile_payment:
+                    assigned_driver = assign_next_driver(conn, ride_id)
 
             response = {
                     "id": ride_id,
@@ -2149,6 +2325,11 @@ class App(SimpleHTTPRequestHandler):
                     "balance_due": balance_due,
                     "tracking_token": tracking_token
                 }
+
+            if not mobile_payment and not is_minicar:
+                response["dispatch_status"] = (
+                    "offered" if assigned_driver else "waiting_for_driver"
+                )
 
             if mobile_payment:
                 amount = deposit_amount if deposit_amount else fare
@@ -2168,6 +2349,59 @@ class App(SimpleHTTPRequestHandler):
 
             return self.sendj(response, 201)
 
+
+                       # CHAUFFEUR REFUSE UNE PROPOSITION
+        if (
+            path.startswith("/api/rides/")
+            and path.endswith("/decline")
+        ):
+
+            user = self.auth()
+
+            if (
+                not user
+                or user.get("role") != "driver"
+            ):
+                return self.sendj(
+                    {"error": "Connexion chauffeur requise"},
+                    401
+                )
+
+            ride_id = path.split("/")[3]
+            driver_id = user.get("driver_id")
+            with db() as conn:
+                ride = conn.execute(
+                    """
+                    SELECT status, vehicle, offered_driver_id
+                    FROM rides
+                    WHERE id=%s
+                    FOR UPDATE
+                    """,
+                    (ride_id,)
+                ).fetchone()
+
+                if (
+                    not ride
+                    or ride["status"] != "searching"
+                    or ride["vehicle"] == "Minicar 14 places"
+                    or ride.get("offered_driver_id") != driver_id
+                ):
+                    return self.sendj(
+                        {"error": "Cette proposition n'est plus disponible"},
+                        409
+                    )
+
+                conn.execute(
+                    """
+                    UPDATE rides
+                    SET offered_driver_id=NULL, offer_expires_at=NULL
+                    WHERE id=%s AND status='searching'
+                    """,
+                    (ride_id,)
+                )
+                assign_next_driver(conn, ride_id)
+
+            return self.sendj({"ok": True, "message": "Course proposée au chauffeur suivant."})
 
                        # CHAUFFEUR ACCEPTE COURSE
         if (
@@ -2193,7 +2427,7 @@ class App(SimpleHTTPRequestHandler):
 
                 ride = conn.execute(
                     """
-                    SELECT fare, fee, vehicle
+                    SELECT fare, fee, vehicle, offered_driver_id, offer_expires_at
                     FROM rides
                     WHERE id=%s
                       AND status='searching'
@@ -2213,9 +2447,18 @@ class App(SimpleHTTPRequestHandler):
                     ride["vehicle"] == "Minicar 14 places"
                 )
 
+                if not is_minicar and (
+                    ride.get("offered_driver_id") != driver_id
+                    or int(ride.get("offer_expires_at") or 0) <= int(time.time())
+                ):
+                    return self.sendj(
+                        {"error": "Le délai de 15 secondes est terminé. La course a été proposée au chauffeur suivant."},
+                        409
+                    )
+
                 driver = conn.execute(
                     """
-                    SELECT balance
+                    SELECT balance, vehicle
                     FROM drivers
                     WHERE id=%s
                     FOR UPDATE
@@ -2226,6 +2469,12 @@ class App(SimpleHTTPRequestHandler):
                 balance = int(
                     driver["balance"] or 0
                 ) if driver else 0
+
+                if not driver or driver["vehicle"] != ride["vehicle"]:
+                    return self.sendj(
+                        {"error": "Cette course ne correspond pas à votre véhicule."},
+                        409
+                    )
 
                 if balance < commission:
                     return self.sendj(
@@ -2257,7 +2506,9 @@ class App(SimpleHTTPRequestHandler):
                         status='accepted',
                         driver_name=%s,
                         driver_id=%s,
-                        commission_charged=%s
+                        commission_charged=%s,
+                        offered_driver_id=NULL,
+                        offer_expires_at=NULL
                     WHERE id=%s
                       AND status='searching'
                     """,
@@ -2608,6 +2859,40 @@ class App(SimpleHTTPRequestHandler):
                 )
 
             return self.sendj({"ok": True})
+                    # CHAUFFEUR HORS LIGNE
+
+        if path == "/api/driver/offline":
+
+            user = self.auth()
+
+            if (
+                not user
+                or user.get("role") != "driver"
+            ):
+                return self.sendj(
+                    {"error": "Connexion chauffeur requise"},
+                    401
+                )
+
+            now = int(time.time())
+            with db() as conn:
+                conn.execute(
+                    "UPDATE drivers SET online=FALSE WHERE id=%s",
+                    (user.get("driver_id"),)
+                )
+                conn.execute(
+                    """
+                    UPDATE rides
+                    SET offer_expires_at=%s
+                    WHERE status='searching'
+                      AND offered_driver_id=%s
+                    """,
+                    (now, user.get("driver_id"))
+                )
+                dispatch_pending_rides(conn)
+
+            return self.sendj({"ok": True, "online": False})
+
                     # CHAUFFEUR EN LIGNE + POSITION GPS
 
         if path == "/api/driver/location":
@@ -2654,6 +2939,7 @@ class App(SimpleHTTPRequestHandler):
                         user.get("driver_id")
                     )
                 )
+                dispatch_pending_rides(conn)
 
             return self.sendj({"ok": True})
         # POSITION GPS CHAUFFEUR
