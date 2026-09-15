@@ -1098,6 +1098,34 @@ path,
 
 /* CLIENT */
 
+function getDispatchPosition(){
+
+  return new Promise((resolve,reject)=>{
+
+    if(!navigator.geolocation){
+      reject(new Error(
+        'La localisation GPS est nécessaire pour trouver le chauffeur le plus proche.'
+      ));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      position=>resolve({
+        lat:position.coords.latitude,
+        lng:position.coords.longitude
+      }),
+      ()=>reject(new Error(
+        'Autorisez la localisation GPS pour commander le chauffeur le plus proche.'
+      )),
+      {
+        enableHighAccuracy:true,
+        maximumAge:5000,
+        timeout:12000
+      }
+    );
+  });
+}
+
 $('#order').onclick=async()=>{
 
 $('#orderError').textContent='';
@@ -1106,6 +1134,14 @@ $('#orderSuccess').textContent='';
 try{
 
 const minicar = isMinicarRoute();
+
+$('#orderSuccess').textContent = minicar
+  ? 'Enregistrement de la réservation…'
+  : 'Recherche de votre position et du chauffeur le plus proche…';
+
+const dispatchCoords = minicar
+  ? null
+  : await getDispatchPosition();
 
 const passengers =
   Number($('#passengerCount').value);
@@ -1203,7 +1239,13 @@ const r=await post(
     minicar ? $('#luggage').value : '',
 
   booking_note:
-    minicar ? $('#bookingNote').value.trim() : ''
+    minicar ? $('#bookingNote').value.trim() : '',
+
+  client_lat:
+    dispatchCoords ? dispatchCoords.lat : null,
+
+  client_lng:
+    dispatchCoords ? dispatchCoords.lng : null
 }
 );
 
@@ -1232,7 +1274,9 @@ if(trackingToken){
 }
 $('#orderSuccess').textContent = minicar
   ? 'Réservation enregistrée. Un chauffeur doit maintenant confirmer votre minicar.'
-  : 'Commande envoyée avec succès.';
+  : (r.dispatch_status === 'offered'
+      ? 'Commande envoyée au chauffeur disponible le plus proche.'
+      : 'Commande enregistrée. Recherche d’un chauffeur disponible à proximité…');
 
 await refreshClient();
 
@@ -1518,6 +1562,85 @@ $('#deleteDriverAccount').onclick=async()=>{
 
 };
 let driverOnline = false;
+let driverOnlineWatchId = null;
+let driverOnlineHeartbeat = null;
+let driverOnlineCoords = null;
+let lastOfferedRide = '';
+
+function startDriverOnlineGps(){
+
+  if(!navigator.geolocation){
+    driverOnline = false;
+    $('#driverOnlineStatus').textContent =
+      'GPS indisponible sur ce téléphone.';
+    return;
+  }
+
+  if(driverOnlineHeartbeat === null){
+    driverOnlineHeartbeat = setInterval(async()=>{
+      if(!driverOnlineCoords || !driverOnline || !driverToken){
+        return;
+      }
+      try{
+        await post('/driver/location',driverOnlineCoords,driverToken);
+      }catch(error){
+        console.log('Actualisation disponibilité:',error.message);
+      }
+    },60000);
+  }
+
+  driverOnlineWatchId = navigator.geolocation.watchPosition(
+    async position=>{
+      try{
+        driverOnlineCoords = {
+          lat:position.coords.latitude,
+          lng:position.coords.longitude
+        };
+        await post(
+          '/driver/location',
+          driverOnlineCoords,
+          driverToken
+        );
+        $('#driverOnlineStatus').innerHTML =
+          '<span class="gpsActive">En ligne • recherche de courses proches</span>';
+        await refreshDriver();
+      }catch(error){
+        $('#driverOnlineStatus').textContent = error.message;
+      }
+    },
+    ()=>{
+      $('#driverOnlineStatus').textContent =
+        'Position introuvable. Vérifiez l’autorisation GPS.';
+    },
+    {
+      enableHighAccuracy:true,
+      maximumAge:3000,
+      timeout:10000
+    }
+  );
+}
+
+async function stopDriverOnlineGps(){
+
+  if(driverOnlineWatchId !== null){
+    navigator.geolocation.clearWatch(driverOnlineWatchId);
+    driverOnlineWatchId = null;
+  }
+
+  if(driverOnlineHeartbeat !== null){
+    clearInterval(driverOnlineHeartbeat);
+    driverOnlineHeartbeat = null;
+  }
+  driverOnlineCoords = null;
+
+  if(driverToken){
+    try{
+      await post('/driver/offline',{},driverToken);
+    }catch(error){
+      console.log('Passage hors ligne:',error.message);
+    }
+  }
+}
 
 $('#driverOnlineBtn').onclick = () => {
 
@@ -1576,6 +1699,19 @@ const rs=await get(
 '/rides',
 driverToken
 );
+const offeredRide = rs.find(
+  r=>r.status==='searching' && r.offer_expires_at
+);
+
+if(offeredRide && offeredRide.id !== lastOfferedRide){
+  lastOfferedRide = offeredRide.id;
+  if('Notification' in window && Notification.permission === 'granted'){
+    new Notification('Nouvelle course proche',{
+      body:offeredRide.pickup + ' → ' + offeredRide.destination,
+      icon:'/icon-192.png'
+    });
+  }
+}
 const acceptedRide =
 rs.find(
     r=>r.status==='accepted'
@@ -1639,9 +1775,12 @@ ${money(r.fare-r.fee)}
 ${
 r.status==='searching'
 ?
-`<button onclick="acceptRide('${esc(r.id)}')">
-Accepter
-</button>`
+(r.offer_expires_at
+  ? `<button class="offerAccept" data-expires="${Number(r.offer_expires_at)}" onclick="acceptRide('${esc(r.id)}')">
+Accepter (<span>${Math.max(0,Math.ceil(Number(r.offer_expires_at)-Date.now()/1000))}</span>s)
+</button>
+<button class="secondary" onclick="declineRide('${esc(r.id)}')">Refuser</button>`
+  : `<button onclick="acceptRide('${esc(r.id)}')">Accepter la réservation</button>`)
 :
 `<button onclick="completeRide('${esc(r.id)}')">
 Terminer
@@ -1656,11 +1795,32 @@ Terminer
 ||
 '<p class="sub">Aucune course.</p>';
 
+updateOfferCountdowns();
+
 }catch(e){
 
 driverLogout();
 
 }
+}
+
+
+function updateOfferCountdowns(){
+
+  $$('.offerAccept').forEach(button=>{
+    const remaining = Math.max(
+      0,
+      Math.ceil(Number(button.dataset.expires || 0) - Date.now()/1000)
+    );
+    const counter = button.querySelector('span');
+    if(counter){
+      counter.textContent = remaining;
+    }
+    button.disabled = remaining <= 0;
+    if(remaining <= 0){
+      button.textContent = 'Proposition expirée';
+    }
+  });
 }
 
 
@@ -1681,6 +1841,27 @@ $('#driverTracking')
 $('#driverGpsInfo').textContent =
 'Course acceptée. Activez votre position GPS.';
 refreshDriver();
+
+}catch(e){
+
+alert(e.message);
+
+}
+}
+
+
+async function declineRide(id){
+
+try{
+
+await post(
+'/rides/'+encodeURIComponent(id)+'/decline',
+{},
+driverToken
+);
+
+lastOfferedRide='';
+await refreshDriver();
 
 }catch(e){
 
@@ -2498,6 +2679,7 @@ refreshClient();
 if(lastRide && trackingToken){
     $('#clientGpsBtn').classList.remove('hidden');
 }
+setInterval(updateOfferCountdowns,1000);
 setInterval(
     ()=>{
 
@@ -2527,7 +2709,7 @@ setInterval(
         }
 
     },
-    5000
+    3000
 );
 
 </script>
