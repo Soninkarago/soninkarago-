@@ -1,4 +1,4 @@
-const CACHE_NAME='soninkarago-v4';
+const CACHE_NAME='soninkarago-v5-nearest-driver';
 const APP_SHELL=[
   '/',
   '/index.html',
