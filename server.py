@@ -15,6 +15,7 @@ import math
 from collections import defaultdict, deque
 import psycopg
 from psycopg.rows import dict_row
+import phonenumbers
 
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -32,7 +33,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.09.15-nearest-dispatch"
+APP_VERSION = "2026.09.16-world-phone"
 RATE_LIMITS = defaultdict(deque)
 RATE_LIMIT_LOCK = threading.Lock()
 
@@ -795,6 +796,21 @@ def valid_coords(lat, lng):
 
     except (TypeError, ValueError):
         return None
+
+
+def normalize_phone(value, region="SN"):
+    """Convertit un numéro national ou international en E.164."""
+    raw = str(value or "").strip()
+    region = str(region or "SN").upper()
+    if len(raw) > 50 or region not in phonenumbers.SUPPORTED_REGIONS:
+        return None
+    try:
+        parsed = phonenumbers.parse(raw, region)
+    except phonenumbers.NumberParseException:
+        return None
+    if parsed.extension or not phonenumbers.is_valid_number(parsed):
+        return None
+    return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
 
 
 def distance_km(lat1, lng1, lat2, lng2):
@@ -1694,9 +1710,9 @@ class App(SimpleHTTPRequestHandler):
                 data.get("name", "")
             ).strip()
 
-            phone = str(
-                data.get("phone", "")
-            ).strip()
+            phone = normalize_phone(
+                data.get("phone"), data.get("phone_region", "SN")
+            )
 
             village = str(
                 data.get("village", "")
@@ -1721,7 +1737,7 @@ class App(SimpleHTTPRequestHandler):
                 )
 
 
-            if len(phone) < 8:
+            if not phone:
                 return self.sendj(
                     {
                         "error":
@@ -1775,6 +1791,17 @@ class App(SimpleHTTPRequestHandler):
 
             try:
                 with db() as conn:
+                    # Évite de réinscrire un numéro sénégalais déjà conservé
+                    # au format national dans une ancienne version du site.
+                    legacy_phone = phone[4:] if phone.startswith("+221") else phone
+                    existing = conn.execute(
+                        "SELECT id FROM drivers WHERE phone IN (%s, %s)",
+                        (phone, legacy_phone)
+                    ).fetchone()
+                    if existing:
+                        return self.sendj(
+                            {"error": "Ce numéro est déjà inscrit"}, 409
+                        )
                     conn.execute(
                         """
                         INSERT INTO drivers(
@@ -1796,7 +1823,7 @@ class App(SimpleHTTPRequestHandler):
                         (
                             driver_id,
                             name[:100],
-                            phone[:30],
+                            phone,
                             village,
                             vehicle,
                             pin_hash,
@@ -1835,9 +1862,15 @@ class App(SimpleHTTPRequestHandler):
             ):
                 return
 
-            phone = str(
-                data.get("phone", "")
-            ).strip()
+            raw_phone = str(data.get("phone", "")).strip()
+            phone = normalize_phone(
+                raw_phone, data.get("phone_region", "SN")
+            )
+
+            if not phone:
+                return self.sendj(
+                    {"error": "Numéro de téléphone invalide"}, 400
+                )
 
             pin = str(
                 data.get("pin", "")
@@ -1849,9 +1882,16 @@ class App(SimpleHTTPRequestHandler):
                     """
                     SELECT *
                     FROM drivers
-                    WHERE phone=%s
+                    WHERE phone IN (%s, %s, %s)
+                    ORDER BY CASE WHEN phone=%s THEN 0 ELSE 1 END
+                    LIMIT 1
                     """,
-                    (phone,)
+                    (
+                        phone,
+                        phone[4:] if phone.startswith("+221") else phone,
+                        raw_phone,
+                        phone
+                    )
                 ).fetchone()
 
 
@@ -2205,9 +2245,14 @@ class App(SimpleHTTPRequestHandler):
                 data.get("client_name", "Client")
             ).strip()[:80]
 
-            phone = str(
-                data.get("phone", "")
-            ).strip()[:30]
+            phone = normalize_phone(
+                data.get("phone"), data.get("phone_region", "SN")
+            )
+            if not phone:
+                return self.sendj(
+                    {"error": "Numéro de téléphone invalide. Vérifiez le pays et le numéro."},
+                    400
+                )
 
             payment = str(
                 data.get("payment", "Espèces")
