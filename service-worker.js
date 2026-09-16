@@ -1,4 +1,4 @@
-const CACHE_NAME='soninkarago-v5-nearest-driver';
+const CACHE_NAME='soninkarago-v6-world-phone';
 const APP_SHELL=[
   '/',
   '/index.html',
