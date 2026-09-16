@@ -1,1 +1,2 @@
 psycopg[binary]
+phonenumbers==9.0.12
