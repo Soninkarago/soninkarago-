@@ -35,7 +35,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.09.17-v8-security-push"
+APP_VERSION = "2026.09.17-v11-dakar-thies-aibd"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "1000"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "220"))
@@ -72,12 +72,26 @@ def allow_request(key, limit, window_seconds):
     return True
 
 
+def in_dakar_thies_service_zone(lat, lng):
+    """Zone voiture SoninkaraGo : Dakar, banlieue, AIBD et axe jusqu'à Thiès."""
+    try:
+        lat = float(lat)
+        lng = float(lng)
+    except (TypeError, ValueError):
+        return False
+
+    # Rectangle volontairement large pour couvrir toutes les rues de Dakar,
+    # Pikine, Guédiawaye, Keur Massar, Rufisque, Diamniadio, l'AIBD et Thiès.
+    # Le calcul Google Routes vérifie ensuite qu'un itinéraire routier réel existe.
+    return 14.45 <= lat <= 15.10 and -17.65 <= lng <= -16.75
+
+
 def dakar_address(query):
-    """Resolve an address within Dakar region; reject ambiguous/outside results."""
+    """Résout une adresse dans la zone voiture Dakar → AIBD → Thiès."""
     from urllib.parse import urlencode
     address = str(query or "").strip()[:180]
-    if len(address) < 4:
-        raise ValueError("Indiquez une adresse ou un lieu précis à Dakar.")
+    if len(address) < 3:
+        raise ValueError("Indiquez une adresse, une rue ou un lieu précis.")
     url = "https://maps.googleapis.com/maps/api/geocode/json?" + urlencode({
         "address": address + ", Sénégal", "components": "country:SN",
         "key": MAPS_API_KEY, "language": "fr", "region": "sn"
@@ -88,19 +102,15 @@ def dakar_address(query):
     except (URLError, TimeoutError) as exc:
         raise RuntimeError("Recherche d'adresse momentanément indisponible.") from exc
     if result.get("status") != "OK" or not result.get("results"):
-        raise ValueError("Adresse introuvable. Ajoutez le quartier et la ville.")
+        raise ValueError("Lieu introuvable. Ajoutez le quartier ou la ville, par exemple : Rue 10 Pikine, Grande Mosquée de Dakar, AIBD ou Thiès.")
+
     for place in result["results"]:
-        components = place.get("address_components", [])
-        in_dakar = any(
-            "administrative_area_level_1" in part.get("types", [])
-            and "dakar" in part.get("long_name", "").lower()
-            for part in components
-        )
         coords = place.get("geometry", {}).get("location", {})
-        lat, lng = coords.get("lat", 0), coords.get("lng", 0)
-        if in_dakar and 14.55 <= lat <= 15.02 and -17.57 <= lng <= -17.08:
+        lat, lng = coords.get("lat"), coords.get("lng")
+        if in_dakar_thies_service_zone(lat, lng):
             return {"address": place["formatted_address"][:200], "lat": lat, "lng": lng}
-    raise ValueError("Ce trajet doit rester dans Dakar et sa banlieue (jusqu'à Rufisque).")
+
+    raise ValueError("Ce lieu est hors de la zone voiture SoninkaraGo. La zone couvre Dakar et toute sa banlieue, l'aéroport Blaise Diagne (AIBD) et l'axe jusqu'à Thiès.")
 
 
 def dakar_quote(pickup, destination):
@@ -124,8 +134,8 @@ def dakar_quote(pickup, destination):
         raise RuntimeError("Impossible de calculer le trajet avec la circulation actuelle.") from exc
     km = int(route["distanceMeters"]) / 1000
     minutes = math.ceil(float(route["duration"].rstrip("s")) / 60)
-    if km < .4 or km > 90 or minutes < 1:
-        raise ValueError("Vérifiez les lieux de départ et d'arrivée.")
+    if km < .4 or km > 125 or minutes < 1:
+        raise ValueError("Vérifiez les lieux de départ et d'arrivée. La zone voiture couvre Dakar, sa banlieue, l'AIBD et Thiès.")
     fare = max(DAKAR_MIN_FARE, DAKAR_BASE_FARE + km * DAKAR_PRICE_PER_KM
                + minutes * DAKAR_PRICE_PER_MINUTE)
     fare = int(math.ceil(fare / 100) * 100)
@@ -898,8 +908,8 @@ def valid_coords(lat, lng):
 
 
 def in_dakar_zone(lat, lng):
-    """Dakar metropolitan service area, including Pikine and Rufisque."""
-    return 14.55 <= float(lat) <= 15.02 and -17.57 <= float(lng) <= -17.08
+    """Compatibilité historique : zone voiture Dakar → AIBD → Thiès."""
+    return in_dakar_thies_service_zone(lat, lng)
 
 
 def normalize_phone(value, region="SN"):
