@@ -319,9 +319,12 @@ DAKAR • MOUDÉRY • BONDJI • DIAWARA • BAKEL • KHADÉ BÉRÉ • WAOUND
 
 <label>Service</label>
 <select id="route">
+<optgroup label="Voiture — Dakar et sa banlieue">
+<option value="dakar_car">Voiture classique — prix selon trajet et circulation</option>
+</optgroup>
 
 <optgroup label="Moto-taxi">
-<option value="moto_moudery_bondji">Moto-taxi — Moudéry → Bondji — 2 000 F</option>
+<option value="moto_moudery_bondji" selected>Moto-taxi — Moudéry → Bondji — 2 000 F</option>
 <option value="moto_bondji_moudery">Moto-taxi — Bondji → Moudéry — 2 000 F</option>
 <option value="moto_moudery_diawara">Moto-taxi — Moudéry → Diawara — 2 000 F</option>
 <option value="moto_diawara_moudery">Moto-taxi — Diawara → Moudéry — 2 000 F</option>
@@ -474,6 +477,16 @@ Minicar 14 places — Ziguinchor → Dakar — 150 000 F
 </optgroup>
 
 </select>
+<div id="dakarBooking" class="hidden" style="margin-top:15px;padding:15px;border:2px solid #fcd116;border-radius:15px;background:#082d1e">
+  <h3>🚗 Voiture à Dakar</h3>
+  <p class="sub">Dakar, Pikine, Guédiawaye, Keur Massar et Rufisque. Vous pouvez réserver pour une autre personne.</p>
+  <label for="dakarPickup">Adresse exacte de départ</label>
+  <input id="dakarPickup" placeholder="Exemple : marché de Pikine, Pikine" autocomplete="street-address">
+  <label for="dakarDestination">Adresse exacte d'arrivée</label>
+  <input id="dakarDestination" placeholder="Exemple : place de l'Indépendance, Dakar Plateau">
+  <button type="button" id="dakarQuoteBtn" class="secondary">Calculer le prix avec la circulation</button>
+  <div id="dakarQuoteInfo" class="gpsInfo" aria-live="polite"></div>
+</div>
 <div id="minicarBooking" class="hidden">
 
   <div style="
@@ -655,6 +668,11 @@ S'inscrire comme chauffeur
 <option>Bondji</option>
 <option>Diawara</option>
 <option>Bakel</option>
+<option>Dakar</option>
+<option>Pikine</option>
+<option>Guédiawaye</option>
+<option>Keur Massar</option>
+<option>Rufisque</option>
 </select>
 
 <label>Type de véhicule</label>
@@ -1007,6 +1025,8 @@ let clientWatchId = null;
 let driverWatchId = null;
 
 let clientMap = null;
+let dakarQuoteToken = '';
+let dakarQuoteRequest = 0;
 let driverMap = null;
 
 let clientSelfMarker = null;
@@ -1029,12 +1049,45 @@ function isMinicarRoute(){
   return $('#route').value.startsWith('minicar_');
 }
 
+function isDakarRoute(){return $('#route').value === 'dakar_car';}
+
+function clearDakarQuote(){
+  dakarQuoteRequest += 1;
+  dakarQuoteToken = '';
+  $('#dakarQuoteInfo').textContent = '';
+  if(isDakarRoute()) $('#fare').textContent = 'Calculez le prix du trajet';
+}
+$('#dakarPickup').addEventListener('input',clearDakarQuote);
+$('#dakarDestination').addEventListener('input',clearDakarQuote);
+
+$('#dakarQuoteBtn').onclick=async()=>{
+  clearDakarQuote();
+  const requestId = dakarQuoteRequest;
+  const pickup = $('#dakarPickup').value.trim();
+  const destination = $('#dakarDestination').value.trim();
+  $('#dakarQuoteInfo').textContent='Calcul du trajet et de la circulation…';
+  try{
+    const q=await post('/dakar/quote',{pickup,destination});
+    if(requestId !== dakarQuoteRequest || !isDakarRoute()) return;
+    dakarQuoteToken=q.quote_token;
+    $('#fare').textContent=money(q.fare);
+    $('#dakarQuoteInfo').textContent=
+      q.pickup+' → '+q.destination+' · '+q.distance_km+' km · '+q.duration_min+
+      ' min avec circulation · '+q.drivers_online+' chauffeur(s) disponible(s) à moins de 20 km du départ. Devis valable 5 minutes.';
+  }catch(e){
+    if(requestId === dakarQuoteRequest) $('#dakarQuoteInfo').textContent=e.message;
+  }
+};
+
 function updateFare(){
 
   const code = $('#route').value;
   const minicar = isMinicarRoute();
+  const dakar = isDakarRoute();
 
-  $('#fare').textContent = money(prices[code] || 0);
+  $('#fare').textContent = dakar ? 'Calculez le prix du trajet' : money(prices[code] || 0);
+  $('#dakarBooking').classList.toggle('hidden', !dakar);
+  if(!dakar) clearDakarQuote();
 
   $('#minicarBooking').classList.toggle(
     'hidden',
@@ -1175,12 +1228,17 @@ $('#orderSuccess').textContent='';
 try{
 
 const minicar = isMinicarRoute();
+const dakar = isDakarRoute();
+if(dakar && !dakarQuoteToken){
+  throw new Error('Calculez d’abord le prix du trajet à Dakar.');
+}
 
 $('#orderSuccess').textContent = minicar
   ? 'Enregistrement de la réservation…'
+  : dakar ? 'Recherche d’un chauffeur près du départ…'
   : 'Recherche de votre position et du chauffeur le plus proche…';
 
-const dispatchCoords = minicar
+const dispatchCoords = (minicar || dakar)
   ? null
   : await getDispatchPosition();
 
@@ -1241,6 +1299,7 @@ const r=await post(
 
   route_code:
     $('#route').value,
+  quote_token: dakar ? dakarQuoteToken : '',
 
   payment:
     $('#payment').value,
@@ -1290,6 +1349,7 @@ const r=await post(
 );
 
 lastRide=r.id;
+localStorage.setItem('lastRideIsDakar', dakar ? '1' : '0');
 
 localStorage.setItem(
 'lastRide',
@@ -1309,7 +1369,7 @@ if(r.payment_url){
   return;
 }
 
-if(trackingToken){
+if(trackingToken && !dakar){
     $('#clientGpsBtn').classList.remove('hidden');
 }
 $('#orderSuccess').textContent = minicar
@@ -2716,7 +2776,7 @@ showAdminArea();
 
 updateFare();
 refreshClient();
-if(lastRide && trackingToken){
+if(lastRide && trackingToken && localStorage.getItem('lastRideIsDakar') !== '1'){
     $('#clientGpsBtn').classList.remove('hidden');
 }
 setInterval(updateOfferCountdowns,1000);
