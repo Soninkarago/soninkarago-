@@ -411,15 +411,14 @@ Minicar 14 places — Ziguinchor → Dakar — 150 000 F
 
 </select>
 <div id="dakarBooking" class="hidden" style="margin-top:15px;padding:15px;border:1px solid #e2e3df;border-radius:15px;background:#082d1e">
-  <h3>Voiture de Dakar à Thiès</h3>
-  <p class="sub">Dakar, Pikine, Guédiawaye, Keur Massar, Rufisque et Thiès. Vous pouvez réserver pour une autre personne.</p>
+  <h3>Voiture à Dakar</h3>
+  <p class="sub">Dakar, Pikine, Guédiawaye, Keur Massar et Rufisque. Vous pouvez réserver pour une autre personne.</p>
   <label for="dakarPickup">Adresse exacte de départ</label>
   <input id="dakarPickup" placeholder="Exemple : marché de Pikine, Pikine" autocomplete="street-address">
   <label for="dakarDestination">Adresse exacte d'arrivée</label>
   <input id="dakarDestination" placeholder="Exemple : place de l'Indépendance, Dakar Plateau">
   <button type="button" id="dakarQuoteBtn" class="secondary">Calculer le prix avec la circulation</button>
   <div id="dakarQuoteInfo" class="gpsInfo" aria-live="polite"></div>
-  <a id="dakarMapLink" class="hidden" target="_blank" rel="noopener noreferrer" style="margin-top:8px;color:#e8c35a">Voir le trajet et les points retenus sur la carte</a>
 </div>
 <div id="minicarBooking" class="hidden">
 
@@ -664,7 +663,6 @@ S'inscrire comme chauffeur
 <option>Guédiawaye</option>
 <option>Keur Massar</option>
 <option>Rufisque</option>
-<option>Thiès</option>
 </select>
 
 <label>Type de véhicule</label>
@@ -1245,8 +1243,6 @@ function clearDakarQuote(){
   dakarQuoteRequest += 1;
   dakarQuoteToken = '';
   $('#dakarQuoteInfo').textContent = '';
-  $('#dakarMapLink').classList.add('hidden');
-  $('#dakarMapLink').removeAttribute('href');
   if(isDakarRoute()) $('#fare').textContent = 'Calculez le prix du trajet';
 }
 $('#dakarPickup').addEventListener('input',clearDakarQuote);
@@ -1264,18 +1260,8 @@ $('#dakarQuoteBtn').onclick=async()=>{
     dakarQuoteToken=q.quote_token;
     $('#fare').textContent=money(q.fare);
     $('#dakarQuoteInfo').textContent=
-      'Départ retenu : '+q.pickup+' | Arrivée retenue : '+q.destination+
-      ' | Trajet routier : '+q.distance_km+' km · '+q.duration_min+
-      ' min avec circulation. Tarif SoninkaraGo : '+money(q.fare)+
-      '. '+q.drivers_online+' chauffeur(s) disponible(s) à moins de 20 km du départ. Devis valable 5 minutes. Vérifiez les points sur la carte avant de commander.';
-    const coords=[q.lat,q.lng,q.destination_lat,q.destination_lng].map(Number);
-    if(coords.every(Number.isFinite)){
-      const link=$('#dakarMapLink');
-      link.href='https://www.google.com/maps/dir/?api=1&travelmode=driving&origin='+
-        encodeURIComponent(coords[0]+','+coords[1])+'&destination='+
-        encodeURIComponent(coords[2]+','+coords[3]);
-      link.classList.remove('hidden');
-    }
+      q.pickup+' → '+q.destination+' · '+q.distance_km+' km · '+q.duration_min+
+      ' min avec circulation · '+q.drivers_online+' chauffeur(s) disponible(s) à moins de 20 km du départ. Devis valable 5 minutes.';
   }catch(e){
     if(requestId === dakarQuoteRequest) $('#dakarQuoteInfo').textContent=e.message;
   }

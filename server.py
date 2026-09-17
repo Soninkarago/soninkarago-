@@ -35,7 +35,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.09.17-route-check"
+APP_VERSION = "2026.09.17-v8-security-push"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "1000"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "220"))
@@ -73,11 +73,11 @@ def allow_request(key, limit, window_seconds):
 
 
 def dakar_address(query):
-    """Resolve a precise point on the Dakar–Thiès corridor."""
+    """Resolve an address within Dakar region; reject ambiguous/outside results."""
     from urllib.parse import urlencode
     address = str(query or "").strip()[:180]
     if len(address) < 4:
-        raise ValueError("Indiquez une adresse ou un lieu précis à Dakar ou Thiès.")
+        raise ValueError("Indiquez une adresse ou un lieu précis à Dakar.")
     url = "https://maps.googleapis.com/maps/api/geocode/json?" + urlencode({
         "address": address + ", Sénégal", "components": "country:SN",
         "key": MAPS_API_KEY, "language": "fr", "region": "sn"
@@ -87,30 +87,20 @@ def dakar_address(query):
             result = json.load(response)
     except (URLError, TimeoutError) as exc:
         raise RuntimeError("Recherche d'adresse momentanément indisponible.") from exc
-    if result.get("status") not in ("OK", "ZERO_RESULTS"):
-        raise RuntimeError("La recherche d'adresse est indisponible. Vérifiez la clé Google Geocoding.")
-    if not result.get("results"):
+    if result.get("status") != "OK" or not result.get("results"):
         raise ValueError("Adresse introuvable. Ajoutez le quartier et la ville.")
     for place in result["results"]:
         components = place.get("address_components", [])
-        in_zone = any(
+        in_dakar = any(
             "administrative_area_level_1" in part.get("types", [])
-            and part.get("long_name", "").lower() in ("dakar", "thiès", "thies")
+            and "dakar" in part.get("long_name", "").lower()
             for part in components
         )
         coords = place.get("geometry", {}).get("location", {})
         lat, lng = coords.get("lat", 0), coords.get("lng", 0)
-        types = set(place.get("types", []))
-        coarse = types.intersection({"locality", "political", "administrative_area_level_1",
-                                     "administrative_area_level_2", "country", "postal_code"})
-        precise = types.intersection({"street_address", "route", "intersection", "premise",
-                                      "subpremise", "establishment", "point_of_interest"})
-        if (in_zone and 14.5 <= lat <= 15.1 and -17.6 <= lng <= -16.6
-                and not place.get("partial_match")
-                and place.get("geometry", {}).get("location_type") != "APPROXIMATE"
-                and (precise or not coarse)):
+        if in_dakar and 14.55 <= lat <= 15.02 and -17.57 <= lng <= -17.08:
             return {"address": place["formatted_address"][:200], "lat": lat, "lng": lng}
-    raise ValueError("Lieu imprécis ou hors de Dakar–Thiès. Ajoutez la rue, le quartier et la ville.")
+    raise ValueError("Ce trajet doit rester dans Dakar et sa banlieue (jusqu'à Rufisque).")
 
 
 def dakar_quote(pickup, destination):
@@ -134,14 +124,13 @@ def dakar_quote(pickup, destination):
         raise RuntimeError("Impossible de calculer le trajet avec la circulation actuelle.") from exc
     km = int(route["distanceMeters"]) / 1000
     minutes = math.ceil(float(route["duration"].rstrip("s")) / 60)
-    if km < .4 or km > 140 or minutes < 1:
+    if km < .4 or km > 90 or minutes < 1:
         raise ValueError("Vérifiez les lieux de départ et d'arrivée.")
     fare = max(DAKAR_MIN_FARE, DAKAR_BASE_FARE + km * DAKAR_PRICE_PER_KM
                + minutes * DAKAR_PRICE_PER_MINUTE)
     fare = int(math.ceil(fare / 100) * 100)
     quote = {"pickup": origin["address"], "destination": arrival["address"],
              "lat": origin["lat"], "lng": origin["lng"],
-             "destination_lat": arrival["lat"], "destination_lng": arrival["lng"],
              "distance_km": round(km, 1), "duration_min": minutes,
              "fare": fare, "exp": int(time.time()) + 300}
     body = b64(json.dumps(quote, separators=(",", ":")).encode())
@@ -578,7 +567,7 @@ ALLOWED_VILLAGES = [
     "Bondji",
     "Diawara",
     "Bakel",
-    "Dakar", "Pikine", "Guédiawaye", "Keur Massar", "Rufisque", "Thiès"
+    "Dakar", "Pikine", "Guédiawaye", "Keur Massar", "Rufisque"
 ]
 
 ALLOWED_VEHICLES = [
@@ -909,8 +898,8 @@ def valid_coords(lat, lng):
 
 
 def in_dakar_zone(lat, lng):
-    """Dakar–Thiès service corridor; the address resolver also checks regions."""
-    return 14.5 <= float(lat) <= 15.1 and -17.6 <= float(lng) <= -16.6
+    """Dakar metropolitan service area, including Pikine and Rufisque."""
+    return 14.55 <= float(lat) <= 15.02 and -17.57 <= float(lng) <= -17.08
 
 
 def normalize_phone(value, region="SN"):
