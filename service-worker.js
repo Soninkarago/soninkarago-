@@ -1,4 +1,4 @@
-const CACHE_NAME='soninkarago-v12-pwa-ios';
+const CACHE_NAME='soninkarago-v13-security-push';
 const APP_SHELL=[
   '/',
   '/index.html',

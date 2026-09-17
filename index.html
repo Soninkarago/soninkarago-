@@ -952,6 +952,42 @@ $('#installApp').onclick=async()=>{
   });
 };
 
+
+function urlBase64ToUint8Array(base64String){
+  const padding='='.repeat((4-base64String.length%4)%4);
+  const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(base64);
+  return Uint8Array.from([...raw].map(ch=>ch.charCodeAt(0)));
+}
+
+async function enableRealPush(){
+  if(!('serviceWorker' in navigator) || !('PushManager' in window)){
+    return {ok:false,reason:'unsupported'};
+  }
+  const registration=await navigator.serviceWorker.ready;
+  const keyResponse=await fetch('/api/push/public-key',{cache:'no-store',credentials:'same-origin'});
+  if(!keyResponse.ok) return {ok:false,reason:'server'};
+  const keyData=await keyResponse.json();
+  if(!keyData.configured || !keyData.public_key){
+    return {ok:false,reason:'not_configured'};
+  }
+  let subscription=await registration.pushManager.getSubscription();
+  if(!subscription){
+    subscription=await registration.pushManager.subscribe({
+      userVisibleOnly:true,
+      applicationServerKey:urlBase64ToUint8Array(keyData.public_key)
+    });
+  }
+  const save=await fetch('/api/push/subscribe',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    credentials:'same-origin',
+    body:JSON.stringify({subscription:subscription.toJSON()})
+  });
+  if(!save.ok) return {ok:false,reason:'server'};
+  return {ok:true,subscription};
+}
+
 async function showTestNotification(){
   const registration=await navigator.serviceWorker?.ready;
   if(registration){
@@ -961,7 +997,7 @@ async function showTestNotification(){
 
 $('#enableNotifications').onclick=async()=>{
   if(!('Notification' in window)){
-    openSheet({title:'Notifications indisponibles',copy:'Ce navigateur ne permet pas les notifications pour SoninkaraGo.',body:''});
+    openSheet({kicker:'Notifications iPhone',title:'Ouvrez SoninkaraGo depuis son icône',copy:'Sur iPhone, les notifications sont disponibles lorsque SoninkaraGo est ajouté à l’écran d’accueil puis ouvert comme une application.',body:'<button class="sheet-cta" type="button" onclick="closeSheet();document.getElementById(\'installApp\').click()">Voir comment installer</button>'});
     return;
   }
   if(isIOS&&!isStandalone()){
@@ -985,13 +1021,30 @@ $('#enableNotifications').onclick=async()=>{
   refreshAppActions();
   if(permission==='granted'){
     await registerServiceWorker();
+    const push=await enableRealPush().catch(()=>({ok:false,reason:'server'}));
     await showTestNotification().catch(()=>{});
-    openSheet({
-      kicker:'Notifications',
-      title:'Notifications activées',
-      copy:'SoninkaraGo peut maintenant vous informer des événements importants liés à vos trajets.',
-      body:'<div class="install-check active"><span class="install-check-dot"></span><strong>Notifications autorisées sur cet appareil</strong></div>'
-    });
+    if(push.ok){
+      openSheet({
+        kicker:'Notifications',
+        title:'Notifications activées',
+        copy:'Votre appareil est maintenant inscrit au service de notifications SoninkaraGo.',
+        body:'<div class="install-check active"><span class="install-check-dot"></span><strong>Notifications push activées sur cet appareil</strong></div>'
+      });
+    }else if(push.reason==='not_configured'){
+      openSheet({
+        kicker:'Notifications',
+        title:'Autorisation enregistrée',
+        copy:'Les notifications sont autorisées sur cet appareil. Le canal push sécurisé doit encore être activé sur le serveur SoninkaraGo.',
+        body:'<div class="install-check active"><span class="install-check-dot"></span><strong>Autorisation iPhone active</strong></div>'
+      });
+    }else{
+      openSheet({
+        kicker:'Notifications',
+        title:'Autorisation enregistrée',
+        copy:'Les notifications locales sont autorisées. La connexion au service push n’a pas encore pu être finalisée.',
+        body:'<div class="install-check"><span class="install-check-dot"></span><span>Réessayez depuis l’application SoninkaraGo lorsque votre connexion est stable.</span></div>'
+      });
+    }
   }
 };
 

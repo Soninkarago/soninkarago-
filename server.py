@@ -29,12 +29,13 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 PAYTECH_API_KEY = os.environ.get("PAYTECH_API_KEY", "")
 PAYTECH_API_SECRET = os.environ.get("PAYTECH_API_SECRET", "")
 PAYTECH_ENV = os.environ.get("PAYTECH_ENV", "prod").lower()
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "").strip()
 PUBLIC_BASE_URL = os.environ.get(
     "PUBLIC_BASE_URL",
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.09.16-dakar-car-quote"
+APP_VERSION = "2026.09.17-v8-security-push"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "1000"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "220"))
@@ -773,6 +774,17 @@ def init():
                 paid_at BIGINT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS push_subscriptions(
+                endpoint TEXT PRIMARY KEY,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                user_agent TEXT NOT NULL DEFAULT '',
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL,
+                revoked BOOLEAN NOT NULL DEFAULT FALSE
+            )
+        """)
 
 
 def hash_pin(pin, salt=None):
@@ -783,7 +795,7 @@ def hash_pin(pin, salt=None):
         "sha256",
         pin.encode(),
         salt.encode(),
-        150000
+        310000
     ).hex()
 
     return digest, salt
@@ -1032,14 +1044,21 @@ def dispatch_pending_rides(conn):
         assign_next_driver(conn, ride["id"], now)
 
 class App(SimpleHTTPRequestHandler):
+    server_version = "SoninkaraGo"
+    sys_version = ""
+
+    def version_string(self):
+        return self.server_version
 
     def security_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("X-Permitted-Cross-Domain-Policies", "none")
         self.send_header(
             "Permissions-Policy",
-            "camera=(), microphone=(), geolocation=(self), payment=(self)"
+            "camera=(), microphone=(), geolocation=(self), payment=(self), usb=(), serial=(), bluetooth=()"
         )
         self.send_header(
             "Content-Security-Policy",
@@ -1048,7 +1067,8 @@ class App(SimpleHTTPRequestHandler):
             "style-src 'self' 'unsafe-inline' https://unpkg.com; "
             "img-src 'self' data: https://*.tile.openstreetmap.org; "
             "connect-src 'self'; font-src 'self'; object-src 'none'; "
-            "base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+            "worker-src 'self'; manifest-src 'self'; media-src 'none'; "
+            "base-uri 'self'; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests"
         )
         self.send_header(
             "Strict-Transport-Security",
@@ -1070,6 +1090,17 @@ class App(SimpleHTTPRequestHandler):
             {"error": "Trop de tentatives. Réessayez plus tard."},
             429
         )
+        return False
+
+    def same_origin_request(self):
+        """Reject browser cross-origin writes while allowing trusted server callbacks without Origin."""
+        origin = (self.headers.get("Origin") or "").strip()
+        if not origin:
+            return True
+        allowed = {PUBLIC_BASE_URL, "https://soninkarago.sn", "https://www.soninkarago.sn"}
+        if origin.rstrip("/") in {item.rstrip("/") for item in allowed if item}:
+            return True
+        self.sendj({"error": "Origine de requête non autorisée."}, 403)
         return False
 
     def serve_static(self, filename, cache_seconds=3600):
@@ -1122,32 +1153,30 @@ class App(SimpleHTTPRequestHandler):
 
     def body(self):
         try:
-            length = int(
-                self.headers.get(
-                    "Content-Length",
-                    "0"
-                )
-            )
-
-            if length > 20000:
-                return {}
-
+            length = int(self.headers.get("Content-Length", "0"))
+            if length < 0 or length > 65536:
+                self.sendj({"error": "Requête trop volumineuse."}, 413)
+                return None
             if not length:
                 return {}
-
-            raw = self.rfile.read(length).decode()
-            content_type = self.headers.get("Content-Type", "")
-
+            raw = self.rfile.read(length).decode("utf-8", errors="strict")
+            content_type = (self.headers.get("Content-Type", "") or "").lower()
             if "application/x-www-form-urlencoded" in content_type:
-                return {
-                    key: values[-1] if values else ""
-                    for key, values in parse_qs(raw).items()
-                }
-
-            return json.loads(raw)
-
+                return {key: values[-1] if values else "" for key, values in parse_qs(raw, keep_blank_values=True, max_num_fields=80).items()}
+            if "application/json" not in content_type:
+                self.sendj({"error": "Type de contenu non accepté."}, 415)
+                return None
+            parsed = json.loads(raw)
+            if not isinstance(parsed, dict):
+                self.sendj({"error": "Format de requête invalide."}, 400)
+                return None
+            return parsed
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            self.sendj({"error": "Requête invalide."}, 400)
+            return None
         except Exception:
-            return {}
+            self.sendj({"error": "Requête invalide."}, 400)
+            return None
 
 
     def send_html(self, title, message, status=200):
@@ -1212,6 +1241,8 @@ class App(SimpleHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
 
+        if path == "/api/push/public-key":
+            return self.sendj({"public_key": VAPID_PUBLIC_KEY, "configured": bool(VAPID_PUBLIC_KEY)})
         if path in ("/", "/index.html"):
             return self.serve_index()
         if path == "/paiement/succes":
@@ -1590,6 +1621,31 @@ class App(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         data = self.body()
+        if data is None:
+            return
+        if path != "/api/paytech/ipn" and not self.same_origin_request():
+            return
+        if path == "/api/push/subscribe":
+            if not self.check_rate("push-subscribe", 10, 3600):
+                return
+            subscription = data.get("subscription") or {}
+            endpoint = str(subscription.get("endpoint") or "").strip()
+            keys = subscription.get("keys") or {}
+            p256dh = str(keys.get("p256dh") or "").strip()
+            auth = str(keys.get("auth") or "").strip()
+            if not endpoint.startswith("https://") or len(endpoint) > 2000 or not p256dh or not auth:
+                return self.sendj({"error": "Abonnement push invalide."}, 400)
+            now = int(time.time())
+            ua = str(self.headers.get("User-Agent", ""))[:300]
+            with db() as conn:
+                conn.execute("""
+                    INSERT INTO push_subscriptions(endpoint,p256dh,auth,user_agent,created_at,updated_at,revoked)
+                    VALUES(%s,%s,%s,%s,%s,%s,FALSE)
+                    ON CONFLICT(endpoint) DO UPDATE SET
+                      p256dh=EXCLUDED.p256dh, auth=EXCLUDED.auth, user_agent=EXCLUDED.user_agent,
+                      updated_at=EXCLUDED.updated_at, revoked=FALSE
+                """, (endpoint,p256dh,auth,ua,now,now))
+            return self.sendj({"ok": True})
         if path == "/api/dakar/quote":
             if not self.check_rate("dakar-quote", 20, 3600):
                 return
