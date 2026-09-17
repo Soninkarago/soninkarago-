@@ -154,6 +154,34 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
   .sponsor-card{padding:3px}
 }
 @media(max-width:420px){.brand-metrics{grid-template-columns:1fr 1fr 1fr}.site-footer a{display:block;margin:8px}}
+
+/* Experience installation & notifications */
+.app-actions{position:relative}
+.app-actions button{position:relative;overflow:hidden;text-align:left;padding:14px 16px 14px 16px}
+.app-actions button::after{content:"";position:absolute;right:14px;top:50%;width:8px;height:8px;border-top:2px solid currentColor;border-right:2px solid currentColor;transform:translateY(-50%) rotate(45deg);opacity:.45}
+.app-actions button[data-state="ready"]{border-color:#cfe0d6;background:#f7fbf8;color:#0b6d4d}
+.app-actions button[data-state="active"]{background:#151815;color:#fff;border-color:#151815}
+.app-actions button .action-title{display:block;font-size:13px;font-weight:760;line-height:1.2}
+.app-actions button .action-sub{display:block;margin-top:3px;font-size:11px;font-weight:520;line-height:1.25;opacity:.68}
+.product-sheet{position:fixed;inset:0;z-index:100;display:none;align-items:flex-end;justify-content:center;background:rgba(7,10,8,.48);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);padding:18px}
+.product-sheet.open{display:flex}
+.product-sheet-panel{width:min(100%,560px);max-height:min(82vh,720px);overflow:auto;background:#fff;border:1px solid #e5e6e2;border-radius:28px;padding:20px;box-shadow:0 24px 80px rgba(0,0,0,.26);animation:sheetIn .22s ease-out}
+@keyframes sheetIn{from{transform:translateY(18px);opacity:.4}to{transform:translateY(0);opacity:1}}
+.sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.sheet-kicker{display:inline-flex;padding:7px 10px;border-radius:999px;background:#eef4f0;color:#0b6d4d;font-size:11px;font-weight:760}
+.sheet-title{margin:12px 0 6px;font-size:28px;line-height:1.02;letter-spacing:-.045em;font-weight:800}
+.sheet-copy{margin:0;color:#656a65;font-size:14px;line-height:1.5}
+.sheet-close{width:42px;min-height:42px;margin:0;padding:0;border-radius:50%;background:#f1f2ef;color:#161916;font-size:22px;font-weight:500;flex:0 0 auto}
+.sheet-close::after{display:none}
+.sheet-steps{display:grid;gap:10px;margin-top:18px}
+.sheet-step{display:flex;gap:12px;align-items:flex-start;padding:14px;border:1px solid #e6e7e3;border-radius:16px;background:#fafaf8}
+.sheet-step-number{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:#151815;color:#fff;font-size:12px;font-weight:760;flex:0 0 auto}
+.sheet-step strong{display:block;font-size:14px;color:#1a1d1a}.sheet-step span{display:block;margin-top:3px;font-size:12px;color:#737773;line-height:1.4}
+.sheet-cta{margin-top:16px;background:#0b7a55;box-shadow:0 10px 24px rgba(11,122,85,.16)}
+.sheet-secondary{margin-top:8px;background:#f0f1ed;color:#202420}
+.install-check{display:flex;align-items:center;gap:10px;margin-top:16px;padding:12px 14px;border-radius:14px;background:#f7f8f5;color:#4a4f4a;font-size:12px}
+.install-check-dot{width:9px;height:9px;border-radius:50%;background:#b6bbb6}.install-check.active .install-check-dot{background:#0b7a55;box-shadow:0 0 0 4px rgba(11,122,85,.1)}
+
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 </style>
 </head>
@@ -176,8 +204,28 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 </div>
 
 <div class="app-actions">
-  <button id="installApp">Installer l’application</button>
-  <button id="enableNotifications">Recevoir les notifications</button>
+  <button id="installApp" type="button">
+    <span class="action-title">Installer SoninkaraGo</span>
+    <span class="action-sub" id="installAppSub">Accès rapide depuis l’écran d’accueil</span>
+  </button>
+  <button id="enableNotifications" type="button">
+    <span class="action-title">Notifications</span>
+    <span class="action-sub" id="notificationSub">Courses et mises à jour importantes</span>
+  </button>
+</div>
+
+<div id="productSheet" class="product-sheet" aria-hidden="true">
+  <div class="product-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-head">
+      <div>
+        <span class="sheet-kicker" id="sheetKicker">SoninkaraGo</span>
+        <h2 class="sheet-title" id="sheetTitle">Installer l’application</h2>
+        <p class="sheet-copy" id="sheetCopy"></p>
+      </div>
+      <button class="sheet-close" id="sheetClose" type="button" aria-label="Fermer">×</button>
+    </div>
+    <div id="sheetBody"></div>
+  </div>
 </div>
 
 <div class="nav main-nav">
@@ -790,52 +838,175 @@ function phoneFields(numberId, countryId){
 }
 
 let installPrompt=null;
+const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
+const isStandalone=()=>window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true;
+const productSheet=$('#productSheet');
+const sheetTitle=$('#sheetTitle');
+const sheetCopy=$('#sheetCopy');
+const sheetBody=$('#sheetBody');
+const sheetKicker=$('#sheetKicker');
 
+function openSheet({kicker='SoninkaraGo',title,copy='',body=''}){
+  sheetKicker.textContent=kicker;
+  sheetTitle.textContent=title;
+  sheetCopy.textContent=copy;
+  sheetBody.innerHTML=body;
+  productSheet.classList.add('open');
+  productSheet.setAttribute('aria-hidden','false');
+}
+function closeSheet(){
+  productSheet.classList.remove('open');
+  productSheet.setAttribute('aria-hidden','true');
+}
+$('#sheetClose').onclick=closeSheet;
+productSheet.addEventListener('click',e=>{if(e.target===productSheet)closeSheet();});
+
+async function registerServiceWorker(){
+  if(!('serviceWorker' in navigator)) return null;
+  try{return await navigator.serviceWorker.register('/service-worker.js');}
+  catch(err){console.warn('Service worker non disponible',err);return null;}
+}
 if('serviceWorker' in navigator){
-  window.addEventListener('load',()=>{
-    navigator.serviceWorker.register('/service-worker.js').catch(()=>{});
-  });
+  window.addEventListener('load',registerServiceWorker);
 }
 
 window.addEventListener('beforeinstallprompt',event=>{
   event.preventDefault();
   installPrompt=event;
+  refreshAppActions();
+});
+window.addEventListener('appinstalled',()=>{
+  installPrompt=null;
+  refreshAppActions();
+  closeSheet();
 });
 
+function refreshAppActions(){
+  const installBtn=$('#installApp');
+  const installSub=$('#installAppSub');
+  const notifBtn=$('#enableNotifications');
+  const notifSub=$('#notificationSub');
+
+  if(isStandalone()){
+    installBtn.dataset.state='active';
+    installBtn.querySelector('.action-title').textContent='SoninkaraGo installé';
+    installSub.textContent='Ouvert comme une application';
+  }else if(installPrompt){
+    installBtn.dataset.state='ready';
+    installBtn.querySelector('.action-title').textContent='Installer SoninkaraGo';
+    installSub.textContent='Installation disponible maintenant';
+  }else{
+    installBtn.dataset.state='';
+    installBtn.querySelector('.action-title').textContent='Installer SoninkaraGo';
+    installSub.textContent=isIOS?'Ajouter à l’écran d’accueil':'Accès rapide depuis l’écran d’accueil';
+  }
+
+  if(!('Notification' in window)){
+    notifBtn.dataset.state='';
+    notifSub.textContent='Non disponible dans ce navigateur';
+  }else if(Notification.permission==='granted'){
+    notifBtn.dataset.state='active';
+    notifSub.textContent='Activées sur cet appareil';
+  }else if(Notification.permission==='denied'){
+    notifBtn.dataset.state='';
+    notifSub.textContent='Bloquées dans les réglages';
+  }else{
+    notifBtn.dataset.state='ready';
+    notifSub.textContent=isIOS&&!isStandalone()?'Installez d’abord l’application':'Courses et mises à jour importantes';
+  }
+}
+
 $('#installApp').onclick=async()=>{
-  if(installPrompt){
-    installPrompt.prompt();
-    await installPrompt.userChoice;
-    installPrompt=null;
+  if(isStandalone()){
+    openSheet({
+      title:'SoninkaraGo est déjà installé',
+      copy:'Vous utilisez déjà la version application. Elle s’ouvre en plein écran depuis votre iPhone.',
+      body:'<div class="install-check active"><span class="install-check-dot"></span><strong>Installation active sur cet appareil</strong></div>'
+    });
     return;
   }
-  alert(
-    /iphone|ipad|ipod/i.test(navigator.userAgent)
-      ? 'Sur iPhone : appuyez sur le bouton Partager, puis « Sur l’écran d’accueil ».'
-      : 'Ouvrez le menu du navigateur puis choisissez « Installer l’application » ou « Ajouter à l’écran d’accueil ».'
-  );
+  if(installPrompt){
+    installPrompt.prompt();
+    const choice=await installPrompt.userChoice;
+    if(choice.outcome==='accepted') installPrompt=null;
+    refreshAppActions();
+    return;
+  }
+  if(isIOS){
+    openSheet({
+      kicker:'Installation iPhone',
+      title:'Ajoutez SoninkaraGo à votre écran d’accueil',
+      copy:'Apple installe les applications web depuis le menu Partager de Safari. Cela prend quelques secondes.',
+      body:`<div class="sheet-steps">
+        <div class="sheet-step"><span class="sheet-step-number">1</span><div><strong>Ouvrez le menu Partager</strong><span>Dans Safari, touchez l’icône Partager en bas de l’écran.</span></div></div>
+        <div class="sheet-step"><span class="sheet-step-number">2</span><div><strong>Choisissez « Sur l’écran d’accueil »</strong><span>Faites défiler les actions si l’option n’apparaît pas tout de suite.</span></div></div>
+        <div class="sheet-step"><span class="sheet-step-number">3</span><div><strong>Appuyez sur « Ajouter »</strong><span>SoninkaraGo apparaîtra comme une application sur votre iPhone.</span></div></div>
+      </div><div class="install-check"><span class="install-check-dot"></span><span>Une fois installée, rouvrez SoninkaraGo depuis l’icône de l’écran d’accueil pour activer les notifications.</span></div>`
+    });
+    return;
+  }
+  openSheet({
+    title:'Installer SoninkaraGo',
+    copy:'Utilisez le menu de votre navigateur puis choisissez « Installer l’application » ou « Ajouter à l’écran d’accueil ».',
+    body:'<div class="install-check"><span class="install-check-dot"></span><span>L’installation permet un accès rapide et une expérience plein écran.</span></div>'
+  });
 };
+
+async function showTestNotification(){
+  const registration=await navigator.serviceWorker?.ready;
+  if(registration){
+    await registration.showNotification('SoninkaraGo',{body:'Notifications activées. Vous recevrez ici les informations importantes sur vos trajets.',icon:'/icon-192.png',badge:'/icon-192.png',tag:'soninkarago-welcome'});
+  }
+}
 
 $('#enableNotifications').onclick=async()=>{
   if(!('Notification' in window)){
-    alert('Les notifications ne sont pas disponibles sur ce navigateur.');
+    openSheet({title:'Notifications indisponibles',copy:'Ce navigateur ne permet pas les notifications pour SoninkaraGo.',body:''});
     return;
   }
-  const permission=await Notification.requestPermission();
-  alert(permission==='granted'
-    ? 'Notifications activées.'
-    : 'Notifications non autorisées. Vous pouvez les activer dans les réglages du téléphone.');
+  if(isIOS&&!isStandalone()){
+    openSheet({
+      kicker:'Notifications iPhone',
+      title:'Installez d’abord SoninkaraGo',
+      copy:'Sur iPhone, les notifications web fonctionnent lorsque SoninkaraGo est ajouté à l’écran d’accueil puis ouvert depuis son icône.',
+      body:'<button class="sheet-cta" type="button" onclick="closeSheet();document.getElementById(\'installApp\').click()">Voir comment installer</button>'
+    });
+    return;
+  }
+  if(Notification.permission==='denied'){
+    openSheet({
+      title:'Notifications bloquées',
+      copy:'Les notifications ont été refusées pour ce site. Vous pouvez les réactiver dans les réglages de Safari ou de l’iPhone.',
+      body:'<div class="install-check"><span class="install-check-dot"></span><span>Réglages iPhone → Notifications → SoninkaraGo, si l’application apparaît dans la liste.</span></div>'
+    });
+    return;
+  }
+  const permission=Notification.permission==='granted'?'granted':await Notification.requestPermission();
+  refreshAppActions();
+  if(permission==='granted'){
+    await registerServiceWorker();
+    await showTestNotification().catch(()=>{});
+    openSheet({
+      kicker:'Notifications',
+      title:'Notifications activées',
+      copy:'SoninkaraGo peut maintenant vous informer des événements importants liés à vos trajets.',
+      body:'<div class="install-check active"><span class="install-check-dot"></span><strong>Notifications autorisées sur cet appareil</strong></div>'
+    });
+  }
 };
 
 async function notifyUser(title,body){
   if(!('Notification' in window) || Notification.permission!=='granted') return;
   const registration=await navigator.serviceWorker?.ready;
   if(registration){
-    registration.showNotification(title,{body,icon:'/icon-192.png',badge:'/icon-192.png'});
+    registration.showNotification(title,{body,icon:'/icon-192.png',badge:'/icon-192.png',tag:'soninkarago-update'});
   }else{
     new Notification(title,{body,icon:'/icon-192.png'});
   }
 }
+
+refreshAppActions();
+
 /* NAVIGATION CLIENT / CHAUFFEUR / ADMIN */
 
 function openPage(page){

@@ -1,4 +1,4 @@
-const CACHE_NAME='soninkarago-v10-premium-brand';
+const CACHE_NAME='soninkarago-v12-pwa-ios';
 const APP_SHELL=[
   '/',
   '/index.html',
@@ -18,9 +18,7 @@ self.addEventListener('install',event=>{
 
 self.addEventListener('activate',event=>{
   event.waitUntil(
-    caches.keys().then(keys=>Promise.all(
-      keys.filter(key=>key!==CACHE_NAME).map(key=>caches.delete(key))
-    ))
+    caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE_NAME).map(key=>caches.delete(key))))
   );
   self.clients.claim();
 });
@@ -28,18 +26,15 @@ self.addEventListener('activate',event=>{
 self.addEventListener('fetch',event=>{
   const request=event.request;
   const url=new URL(request.url);
-
   if(request.method!=='GET' || url.pathname.startsWith('/api/')) return;
 
   if(request.mode==='navigate'){
     event.respondWith(
-      fetch(request)
-        .then(response=>{
-          const copy=response.clone();
-          caches.open(CACHE_NAME).then(cache=>cache.put('/',copy));
-          return response;
-        })
-        .catch(()=>caches.match('/'))
+      fetch(request).then(response=>{
+        const copy=response.clone();
+        caches.open(CACHE_NAME).then(cache=>cache.put('/',copy));
+        return response;
+      }).catch(()=>caches.match('/'))
     );
     return;
   }
@@ -55,7 +50,26 @@ self.addEventListener('fetch',event=>{
   );
 });
 
+self.addEventListener('push',event=>{
+  let data={title:'SoninkaraGo',body:'Vous avez une nouvelle information.'};
+  try{data={...data,...event.data.json()};}catch(e){if(event.data)data.body=event.data.text();}
+  event.waitUntil(self.registration.showNotification(data.title||'SoninkaraGo',{
+    body:data.body||'',
+    icon:'/icon-192.png',
+    badge:'/icon-192.png',
+    tag:data.tag||'soninkarago-push',
+    data:{url:data.url||'/'}
+  }));
+});
+
 self.addEventListener('notificationclick',event=>{
   event.notification.close();
-  event.waitUntil(clients.openWindow('/'));
+  const target=(event.notification.data&&event.notification.data.url)||'/';
+  event.waitUntil((async()=>{
+    const list=await clients.matchAll({type:'window',includeUncontrolled:true});
+    for(const client of list){
+      if('focus' in client){await client.focus();if('navigate' in client)await client.navigate(target);return;}
+    }
+    if(clients.openWindow) return clients.openWindow(target);
+  })());
 });

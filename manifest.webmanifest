@@ -1,15 +1,19 @@
 {
-  "name": "SoninkaraGo",
+  "name": "SoninkaraGo — Transport au Sénégal",
   "short_name": "SoninkaraGo",
-  "description": "Réservation de trajets et suivi de chauffeur au Sénégal.",
+  "description": "Réservez, suivez et gérez vos trajets avec SoninkaraGo.",
   "lang": "fr",
   "start_url": "/?source=app",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait-primary",
-  "background_color": "#006b3c",
-  "theme_color": "#006b3c",
-  "categories": ["travel", "navigation", "business"],
+  "background_color": "#f5f5f2",
+  "theme_color": "#0f1210",
+  "categories": [
+    "travel",
+    "navigation",
+    "business"
+  ],
   "icons": [
     {
       "src": "/icon-192.png",
@@ -27,5 +31,6 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "id": "/"
 }
