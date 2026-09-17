@@ -6,3 +6,6 @@ services:
     startCommand: python server.py
     healthCheckPath: /api/health
     autoDeploy: true
+    envVars:
+      - key: PAYTECH_ENV
+        value: prod
