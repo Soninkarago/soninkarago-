@@ -163,23 +163,23 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 .app-actions button[data-state="active"]{background:#151815;color:#fff;border-color:#151815}
 .app-actions button .action-title{display:block;font-size:13px;font-weight:760;line-height:1.2}
 .app-actions button .action-sub{display:block;margin-top:3px;font-size:11px;font-weight:520;line-height:1.25;opacity:.68}
-.product-sheet{position:fixed;inset:0;z-index:100;display:none;align-items:flex-end;justify-content:center;background:rgba(7,10,8,.48);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);padding:18px}
+.product-sheet{position:fixed;inset:0;z-index:100;display:none;align-items:flex-end;justify-content:center;background:rgba(7,10,8,.44);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:10px}
 .product-sheet.open{display:flex}
-.product-sheet-panel{width:min(100%,560px);max-height:min(82vh,720px);overflow:auto;background:#fff;border:1px solid #e5e6e2;border-radius:28px;padding:20px;box-shadow:0 24px 80px rgba(0,0,0,.26);animation:sheetIn .22s ease-out}
+.product-sheet-panel{width:min(100%,560px);max-height:min(88vh,760px);overflow:auto;background:#fff;border:1px solid #e5e6e2;border-radius:26px;padding:18px;box-shadow:0 24px 80px rgba(0,0,0,.24);animation:sheetIn .22s ease-out}
 @keyframes sheetIn{from{transform:translateY(18px);opacity:.4}to{transform:translateY(0);opacity:1}}
 .sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
 .sheet-kicker{display:inline-flex;padding:7px 10px;border-radius:999px;background:#eef4f0;color:#0b6d4d;font-size:11px;font-weight:760}
-.sheet-title{margin:12px 0 6px;font-size:28px;line-height:1.02;letter-spacing:-.045em;font-weight:800}
-.sheet-copy{margin:0;color:#656a65;font-size:14px;line-height:1.5}
-.sheet-close{width:42px;min-height:42px;margin:0;padding:0;border-radius:50%;background:#f1f2ef;color:#161916;font-size:22px;font-weight:500;flex:0 0 auto}
+.sheet-title{margin:10px 0 6px;font-size:24px;line-height:1.04;letter-spacing:-.04em;font-weight:800}
+.sheet-copy{margin:0;color:#656a65;font-size:13px;line-height:1.45}
+.sheet-close{width:38px;min-height:38px;margin:0;padding:0;border-radius:50%;background:#f1f2ef;color:#161916;font-size:21px;font-weight:500;flex:0 0 auto}
 .sheet-close::after{display:none}
-.sheet-steps{display:grid;gap:10px;margin-top:18px}
-.sheet-step{display:flex;gap:12px;align-items:flex-start;padding:14px;border:1px solid #e6e7e3;border-radius:16px;background:#fafaf8}
-.sheet-step-number{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:#151815;color:#fff;font-size:12px;font-weight:760;flex:0 0 auto}
-.sheet-step strong{display:block;font-size:14px;color:#1a1d1a}.sheet-step span{display:block;margin-top:3px;font-size:12px;color:#737773;line-height:1.4}
+.sheet-steps{display:grid;gap:8px;margin-top:14px}
+.sheet-step{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;padding:12px;border:1px solid #e5e8e3;border-radius:15px;background:#fbfcfa}
+.sheet-step-number{display:inline-flex;align-items:center;justify-content:center;min-width:58px;height:26px;padding:0 10px;border-radius:999px;background:#eaf4ee;color:#0b6d4d;font-size:11px;font-weight:800;letter-spacing:.01em;flex:0 0 auto}
+.sheet-step strong{display:block;font-size:13.5px;color:#1a1d1a;line-height:1.25}.sheet-step span{display:block;margin-top:2px;font-size:11.5px;color:#737773;line-height:1.35}
 .sheet-cta{margin-top:16px;background:#0b7a55;box-shadow:0 10px 24px rgba(11,122,85,.16)}
 .sheet-secondary{margin-top:8px;background:#f0f1ed;color:#202420}
-.install-check{display:flex;align-items:center;gap:10px;margin-top:16px;padding:12px 14px;border-radius:14px;background:#f7f8f5;color:#4a4f4a;font-size:12px}
+.install-check{display:flex;align-items:center;gap:9px;margin-top:12px;padding:10px 12px;border-radius:13px;background:#f7f8f5;color:#4a4f4a;font-size:11.5px;line-height:1.35}
 .install-check-dot{width:9px;height:9px;border-radius:50%;background:#b6bbb6}.install-check.active .install-check-dot{background:#0b7a55;box-shadow:0 0 0 4px rgba(11,122,85,.1)}
 
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
@@ -936,11 +936,11 @@ $('#installApp').onclick=async()=>{
     openSheet({
       kicker:'Installation iPhone',
       title:'Ajoutez SoninkaraGo à votre écran d’accueil',
-      copy:'Apple installe les applications web depuis le menu Partager de Safari. Cela prend quelques secondes.',
+      copy:'Sur iPhone, ajoutez SoninkaraGo depuis le menu Partager de Safari.',
       body:`<div class="sheet-steps">
-        <div class="sheet-step"><span class="sheet-step-number">1</span><div><strong>Ouvrez le menu Partager</strong><span>Dans Safari, touchez l’icône Partager en bas de l’écran.</span></div></div>
-        <div class="sheet-step"><span class="sheet-step-number">2</span><div><strong>Choisissez « Sur l’écran d’accueil »</strong><span>Faites défiler les actions si l’option n’apparaît pas tout de suite.</span></div></div>
-        <div class="sheet-step"><span class="sheet-step-number">3</span><div><strong>Appuyez sur « Ajouter »</strong><span>SoninkaraGo apparaîtra comme une application sur votre iPhone.</span></div></div>
+        <div class="sheet-step"><span class="sheet-step-number">Étape 1</span><div><strong>Ouvrez le menu Partager</strong><span>Dans Safari, touchez Partager.</span></div></div>
+        <div class="sheet-step"><span class="sheet-step-number">Étape 2</span><div><strong>Choisissez « Sur l’écran d’accueil »</strong><span>Faites défiler si l’option n’apparaît pas.</span></div></div>
+        <div class="sheet-step"><span class="sheet-step-number">Étape 3</span><div><strong>Appuyez sur « Ajouter »</strong><span>SoninkaraGo apparaîtra sur votre écran d’accueil.</span></div></div>
       </div><div class="install-check"><span class="install-check-dot"></span><span>Une fois installée, rouvrez SoninkaraGo depuis l’icône de l’écran d’accueil pour activer les notifications.</span></div>`
     });
     return;
