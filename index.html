@@ -997,15 +997,20 @@ async function showTestNotification(){
 
 $('#enableNotifications').onclick=async()=>{
   if(!('Notification' in window)){
-    openSheet({kicker:'Notifications iPhone',title:'Ouvrez SoninkaraGo depuis son icône',copy:'Sur iPhone, les notifications sont disponibles lorsque SoninkaraGo est ajouté à l’écran d’accueil puis ouvert comme une application.',body:'<button class="sheet-cta" type="button" onclick="closeSheet();document.getElementById(\'installApp\').click()">Voir comment installer</button>'});
+    openSheet({
+      kicker:'Notifications',
+      title:'Notifications non disponibles dans Safari',
+      copy:'Le bouton Notifications est distinct de l’installation. Sur iPhone, Apple autorise les notifications web uniquement lorsque SoninkaraGo est ouvert depuis son icône sur l’écran d’accueil.',
+      body:'<div class="install-check"><span class="install-check-dot"></span><span>Si SoninkaraGo est déjà installé, fermez Safari et ouvrez directement l’icône SoninkaraGo. Revenez ensuite sur Notifications.</span></div>'
+    });
     return;
   }
   if(isIOS&&!isStandalone()){
     openSheet({
-      kicker:'Notifications iPhone',
-      title:'Installez d’abord SoninkaraGo',
-      copy:'Sur iPhone, les notifications web fonctionnent lorsque SoninkaraGo est ajouté à l’écran d’accueil puis ouvert depuis son icône.',
-      body:'<button class="sheet-cta" type="button" onclick="closeSheet();document.getElementById(\'installApp\').click()">Voir comment installer</button>'
+      kicker:'Notifications',
+      title:'Ouvrez l’application SoninkaraGo',
+      copy:'Vous êtes actuellement dans Safari. Pour activer les notifications, quittez Safari et ouvrez SoninkaraGo depuis son icône sur l’écran d’accueil.',
+      body:'<div class="install-check"><span class="install-check-dot"></span><span>Le bouton Notifications ne lancera plus le parcours d’installation.</span></div>'
     });
     return;
   }
