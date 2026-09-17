@@ -1,4 +1,4 @@
-const CACHE_NAME='soninkarago-v15-address-fix';
+const CACHE_NAME='soninkarago-v14-route-check';
 const APP_SHELL=[
   '/',
   '/index.html',

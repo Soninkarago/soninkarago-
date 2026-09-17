@@ -35,7 +35,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.09.17-address-fix"
+APP_VERSION = "2026.09.17-route-check"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "1000"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "220"))
@@ -73,7 +73,7 @@ def allow_request(key, limit, window_seconds):
 
 
 def dakar_address(query):
-    """Resolve a point on the Dakar–Thiès corridor, including named towns."""
+    """Resolve a precise point on the Dakar–Thiès corridor."""
     from urllib.parse import urlencode
     address = str(query or "").strip()[:180]
     if len(address) < 4:
@@ -91,7 +91,6 @@ def dakar_address(query):
         raise RuntimeError("La recherche d'adresse est indisponible. Vérifiez la clé Google Geocoding.")
     if not result.get("results"):
         raise ValueError("Adresse introuvable. Ajoutez le quartier et la ville.")
-    candidates = []
     for place in result["results"]:
         components = place.get("address_components", [])
         in_zone = any(
@@ -106,15 +105,12 @@ def dakar_address(query):
                                      "administrative_area_level_2", "country", "postal_code"})
         precise = types.intersection({"street_address", "route", "intersection", "premise",
                                       "subpremise", "establishment", "point_of_interest"})
-        if in_zone and 14.5 <= lat <= 15.1 and -17.6 <= lng <= -16.6:
-            # Prefer a street or landmark when Google offers one, but allow
-            # a town such as Mbao when that is what the passenger entered.
-            rank = 2 if precise else (1 if coarse else 0)
-            candidates.append((rank, {"address": place["formatted_address"][:200],
-                                      "lat": lat, "lng": lng}))
-    if candidates:
-        return max(candidates, key=lambda item: item[0])[1]
-    raise ValueError("Lieu introuvable dans la zone Dakar–Thiès. Précisez la ville ou le quartier.")
+        if (in_zone and 14.5 <= lat <= 15.1 and -17.6 <= lng <= -16.6
+                and not place.get("partial_match")
+                and place.get("geometry", {}).get("location_type") != "APPROXIMATE"
+                and (precise or not coarse)):
+            return {"address": place["formatted_address"][:200], "lat": lat, "lng": lng}
+    raise ValueError("Lieu imprécis ou hors de Dakar–Thiès. Ajoutez la rue, le quartier et la ville.")
 
 
 def dakar_quote(pickup, destination):
