@@ -8,6 +8,7 @@ import time
 import hmac
 import hashlib
 import base64
+import binascii
 import secrets
 import mimetypes
 import threading
@@ -33,7 +34,12 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.09.16-world-phone"
+APP_VERSION = "2026.09.16-dakar-car-quote"
+MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "1000"))
+DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "220"))
+DAKAR_PRICE_PER_MINUTE = int(os.environ.get("DAKAR_PRICE_PER_MINUTE", "20"))
+DAKAR_MIN_FARE = int(os.environ.get("DAKAR_MIN_FARE", "1500"))
 RATE_LIMITS = defaultdict(deque)
 RATE_LIMIT_LOCK = threading.Lock()
 
@@ -63,6 +69,86 @@ def allow_request(key, limit, window_seconds):
                 RATE_LIMITS.pop(item_key, None)
 
     return True
+
+
+def dakar_address(query):
+    """Resolve an address within Dakar region; reject ambiguous/outside results."""
+    from urllib.parse import urlencode
+    address = str(query or "").strip()[:180]
+    if len(address) < 4:
+        raise ValueError("Indiquez une adresse ou un lieu précis à Dakar.")
+    url = "https://maps.googleapis.com/maps/api/geocode/json?" + urlencode({
+        "address": address + ", Sénégal", "components": "country:SN",
+        "key": MAPS_API_KEY, "language": "fr", "region": "sn"
+    })
+    try:
+        with urlopen(url, timeout=10) as response:
+            result = json.load(response)
+    except (URLError, TimeoutError) as exc:
+        raise RuntimeError("Recherche d'adresse momentanément indisponible.") from exc
+    if result.get("status") != "OK" or not result.get("results"):
+        raise ValueError("Adresse introuvable. Ajoutez le quartier et la ville.")
+    for place in result["results"]:
+        components = place.get("address_components", [])
+        in_dakar = any(
+            "administrative_area_level_1" in part.get("types", [])
+            and "dakar" in part.get("long_name", "").lower()
+            for part in components
+        )
+        coords = place.get("geometry", {}).get("location", {})
+        lat, lng = coords.get("lat", 0), coords.get("lng", 0)
+        if in_dakar and 14.55 <= lat <= 15.02 and -17.57 <= lng <= -17.08:
+            return {"address": place["formatted_address"][:200], "lat": lat, "lng": lng}
+    raise ValueError("Ce trajet doit rester dans Dakar et sa banlieue (jusqu'à Rufisque).")
+
+
+def dakar_quote(pickup, destination):
+    if not MAPS_API_KEY or not AUTH_SECRET:
+        raise RuntimeError("Devis Dakar indisponible : configuration des itinéraires nécessaire.")
+    origin = dakar_address(pickup)
+    arrival = dakar_address(destination)
+    payload = json.dumps({
+        "origin": {"location": {"latLng": {"latitude": origin["lat"], "longitude": origin["lng"]}}},
+        "destination": {"location": {"latLng": {"latitude": arrival["lat"], "longitude": arrival["lng"]}}},
+        "travelMode": "DRIVE", "routingPreference": "TRAFFIC_AWARE",
+        "departureTime": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 30))
+    }).encode()
+    req = Request("https://routes.googleapis.com/directions/v2:computeRoutes", payload,
+        headers={"Content-Type": "application/json", "X-Goog-Api-Key": MAPS_API_KEY,
+                 "X-Goog-FieldMask": "routes.distanceMeters,routes.duration"}, method="POST")
+    try:
+        with urlopen(req, timeout=12) as response:
+            route = json.load(response)["routes"][0]
+    except (URLError, TimeoutError, KeyError, IndexError, ValueError) as exc:
+        raise RuntimeError("Impossible de calculer le trajet avec la circulation actuelle.") from exc
+    km = int(route["distanceMeters"]) / 1000
+    minutes = math.ceil(float(route["duration"].rstrip("s")) / 60)
+    if km < .4 or km > 90 or minutes < 1:
+        raise ValueError("Vérifiez les lieux de départ et d'arrivée.")
+    fare = max(DAKAR_MIN_FARE, DAKAR_BASE_FARE + km * DAKAR_PRICE_PER_KM
+               + minutes * DAKAR_PRICE_PER_MINUTE)
+    fare = int(math.ceil(fare / 100) * 100)
+    quote = {"pickup": origin["address"], "destination": arrival["address"],
+             "lat": origin["lat"], "lng": origin["lng"],
+             "distance_km": round(km, 1), "duration_min": minutes,
+             "fare": fare, "exp": int(time.time()) + 300}
+    body = b64(json.dumps(quote, separators=(",", ":")).encode())
+    signature = hmac.new(AUTH_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
+    return quote, body + "." + signature
+
+
+def verify_dakar_quote(token):
+    try:
+        body, signature = token.split(".")
+        expected = hmac.new(AUTH_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            raise ValueError()
+        quote = json.loads(b64decode(body))
+        if quote["exp"] < time.time():
+            raise ValueError()
+        return quote
+    except (ValueError, KeyError, TypeError, binascii.Error, UnicodeDecodeError):
+        raise ValueError("Le devis a expiré. Recalculez le prix avant de commander.")
 
 
 def request_paytech_payment(ride_id, route, amount, payment, client_name):
@@ -479,7 +565,8 @@ ALLOWED_VILLAGES = [
     "Moudéry",
     "Bondji",
     "Diawara",
-    "Bakel"
+    "Bakel",
+    "Dakar", "Pikine", "Guédiawaye", "Keur Massar", "Rufisque"
 ]
 
 ALLOWED_VEHICLES = [
@@ -798,6 +885,11 @@ def valid_coords(lat, lng):
         return None
 
 
+def in_dakar_zone(lat, lng):
+    """Dakar metropolitan service area, including Pikine and Rufisque."""
+    return 14.55 <= float(lat) <= 15.02 and -17.57 <= float(lng) <= -17.08
+
+
 def normalize_phone(value, region="SN"):
     """Convertit un numéro national ou international en E.164."""
     raw = str(value or "").strip()
@@ -832,7 +924,7 @@ def assign_next_driver(conn, ride_id, now=None):
     now = int(now or time.time())
     ride = conn.execute(
         """
-        SELECT id, vehicle, fee, status, client_lat, client_lng,
+        SELECT id, vehicle, fee, status, client_lat, client_lng, route_code,
                offered_driver_id, offer_expires_at, offer_attempts
         FROM rides
         WHERE id=%s
@@ -882,7 +974,11 @@ def assign_next_driver(conn, ride_id, now=None):
         (ride["vehicle"], now - 300, int(ride["fee"] or 0))
     ).fetchall()
 
-    eligible = [driver for driver in drivers if driver["id"] not in attempted]
+    eligible = [driver for driver in drivers if driver["id"] not in attempted
+                and (ride["route_code"] != "dakar_car" or
+                     (in_dakar_zone(driver["latitude"], driver["longitude"])
+                      and distance_km(ride["client_lat"], ride["client_lng"],
+                                      driver["latitude"], driver["longitude"]) <= 20))]
     if not eligible:
         conn.execute(
             """
@@ -1494,6 +1590,30 @@ class App(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         data = self.body()
+        if path == "/api/dakar/quote":
+            if not self.check_rate("dakar-quote", 20, 3600):
+                return
+            try:
+                quote, token = dakar_quote(data.get("pickup"), data.get("destination"))
+                with db() as conn:
+                    available = conn.execute("""
+                        SELECT latitude, longitude FROM drivers
+                        WHERE status='approved' AND online=TRUE AND vehicle='Voiture taxi'
+                          AND latitude IS NOT NULL AND longitude IS NOT NULL
+                          AND last_location_at >= %s
+                          AND balance >= %s
+                          AND NOT EXISTS (SELECT 1 FROM rides r WHERE r.driver_id=drivers.id AND r.status='accepted')
+                    """, (int(time.time()) - 300, (quote["fare"] + 9) // 10)).fetchall()
+                available = sum(in_dakar_zone(d["latitude"], d["longitude"])
+                                and distance_km(quote["lat"], quote["lng"],
+                                                d["latitude"], d["longitude"]) <= 20
+                                for d in available)
+                return self.sendj({**quote, "quote_token": token,
+                                   "drivers_online": available})
+            except ValueError as exc:
+                return self.sendj({"error": str(exc)}, 400)
+            except RuntimeError as exc:
+                return self.sendj({"error": str(exc)}, 503)
         if path == "/api/paytech/ipn":
             if not PAYTECH_API_KEY or not PAYTECH_API_SECRET:
                 return self.sendj({"error": "PayTech non configuré"}, 503)
@@ -2169,6 +2289,14 @@ class App(SimpleHTTPRequestHandler):
             ).strip()
 
             route = ROUTES.get(route_code)
+            dakar_ride = route_code == "dakar_car"
+            if dakar_ride:
+                try:
+                    quote = verify_dakar_quote(str(data.get("quote_token", "")))
+                except ValueError as exc:
+                    return self.sendj({"error": str(exc)}, 400)
+                route = {"service": "Voiture taxi", "pickup": quote["pickup"],
+                         "destination": quote["destination"], "fare": quote["fare"]}
 
             if not route:
                 return self.sendj(
@@ -2278,12 +2406,29 @@ class App(SimpleHTTPRequestHandler):
                 data.get("client_lat"),
                 data.get("client_lng")
             )
+            if dakar_ride:
+                # Le départ du trajet, pas le téléphone du réservant, détermine l'attribution.
+                client_coords = (quote["lat"], quote["lng"])
             if not is_minicar and not client_coords:
                 return self.sendj(
                     {"error": "Activez votre position GPS pour trouver le chauffeur le plus proche"},
                     400
                 )
             client_lat, client_lng = client_coords or (None, None)
+
+            if dakar_ride:
+                with db() as conn:
+                    nearby = conn.execute("""
+                        SELECT latitude, longitude FROM drivers
+                        WHERE status='approved' AND online=TRUE AND vehicle='Voiture taxi'
+                          AND latitude IS NOT NULL AND longitude IS NOT NULL
+                          AND last_location_at >= %s AND balance >= %s
+                          AND NOT EXISTS (SELECT 1 FROM rides r WHERE r.driver_id=drivers.id AND r.status='accepted')
+                    """, (int(time.time()) - 300, fee)).fetchall()
+                if not any(in_dakar_zone(d["latitude"], d["longitude"])
+                           and distance_km(client_lat, client_lng, d["latitude"], d["longitude"]) <= 20
+                           for d in nearby):
+                    return self.sendj({"error": "Aucun chauffeur voiture disponible près du départ. Aucun paiement demandé."}, 409)
 
             assigned_driver = None
             with db() as conn:
@@ -2858,7 +3003,7 @@ class App(SimpleHTTPRequestHandler):
             with db() as conn:
                 ride = conn.execute(
                     """
-                    SELECT status, tracking_token
+                    SELECT status, tracking_token, route_code
                     FROM rides
                     WHERE id=%s
                     """,
@@ -2870,6 +3015,9 @@ class App(SimpleHTTPRequestHandler):
                         {"error": "Course introuvable"},
                         404
                     )
+
+                if ride["route_code"] == "dakar_car":
+                    return self.sendj({"error": "Le lieu de départ de cette course est fixe."}, 409)
 
                 if not hmac.compare_digest(
                     str(ride.get("tracking_token") or ""),
