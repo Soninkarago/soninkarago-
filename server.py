@@ -72,11 +72,11 @@ def allow_request(key, limit, window_seconds):
 
 
 def dakar_address(query):
-    """Resolve an address within Dakar region; reject ambiguous/outside results."""
+    """Resolve an address in the Dakar–Thiès car service area."""
     from urllib.parse import urlencode
     address = str(query or "").strip()[:180]
     if len(address) < 4:
-        raise ValueError("Indiquez une adresse ou un lieu précis à Dakar.")
+        raise ValueError("Indiquez une adresse ou un lieu précis entre Dakar et Thiès.")
     url = "https://maps.googleapis.com/maps/api/geocode/json?" + urlencode({
         "address": address + ", Sénégal", "components": "country:SN",
         "key": MAPS_API_KEY, "language": "fr", "region": "sn"
@@ -90,21 +90,22 @@ def dakar_address(query):
         raise ValueError("Adresse introuvable. Ajoutez le quartier et la ville.")
     for place in result["results"]:
         components = place.get("address_components", [])
-        in_dakar = any(
+        in_service_region = any(
             "administrative_area_level_1" in part.get("types", [])
-            and "dakar" in part.get("long_name", "").lower()
+            and any(name in part.get("long_name", "").casefold()
+                    for name in ("dakar", "thiès", "thies"))
             for part in components
         )
         coords = place.get("geometry", {}).get("location", {})
         lat, lng = coords.get("lat", 0), coords.get("lng", 0)
-        if in_dakar and 14.55 <= lat <= 15.02 and -17.57 <= lng <= -17.08:
+        if in_service_region and in_dakar_thies_zone(lat, lng):
             return {"address": place["formatted_address"][:200], "lat": lat, "lng": lng}
-    raise ValueError("Ce trajet doit rester dans Dakar et sa banlieue (jusqu'à Rufisque).")
+    raise ValueError("Ce trajet doit rester dans la zone desservie entre Dakar et Thiès.")
 
 
 def dakar_quote(pickup, destination):
     if not MAPS_API_KEY or not AUTH_SECRET:
-        raise RuntimeError("Devis Dakar indisponible : configuration des itinéraires nécessaire.")
+        raise RuntimeError("Devis voiture indisponible : configuration des itinéraires nécessaire.")
     origin = dakar_address(pickup)
     arrival = dakar_address(destination)
     payload = json.dumps({
@@ -123,7 +124,7 @@ def dakar_quote(pickup, destination):
         raise RuntimeError("Impossible de calculer le trajet avec la circulation actuelle.") from exc
     km = int(route["distanceMeters"]) / 1000
     minutes = math.ceil(float(route["duration"].rstrip("s")) / 60)
-    if km < .4 or km > 90 or minutes < 1:
+    if km < .4 or km > 140 or minutes < 1:
         raise ValueError("Vérifiez les lieux de départ et d'arrivée.")
     fare = max(DAKAR_MIN_FARE, DAKAR_BASE_FARE + km * DAKAR_PRICE_PER_KM
                + minutes * DAKAR_PRICE_PER_MINUTE)
@@ -566,7 +567,7 @@ ALLOWED_VILLAGES = [
     "Bondji",
     "Diawara",
     "Bakel",
-    "Dakar", "Pikine", "Guédiawaye", "Keur Massar", "Rufisque"
+    "Dakar", "Pikine", "Guédiawaye", "Keur Massar", "Rufisque", "Thiès"
 ]
 
 ALLOWED_VEHICLES = [
@@ -885,9 +886,12 @@ def valid_coords(lat, lng):
         return None
 
 
-def in_dakar_zone(lat, lng):
-    """Dakar metropolitan service area, including Pikine and Rufisque."""
-    return 14.55 <= float(lat) <= 15.02 and -17.57 <= float(lng) <= -17.08
+def in_dakar_thies_zone(lat, lng):
+    """Dakar, its suburbs and the road corridor through Thiès city."""
+    lat, lng = float(lat), float(lng)
+    if not (14.55 <= lat <= 15.02 and -17.57 <= lng <= -16.85):
+        return False
+    return lng <= -17.08 or 14.60 <= lat <= 14.92
 
 
 def normalize_phone(value, region="SN"):
@@ -976,7 +980,7 @@ def assign_next_driver(conn, ride_id, now=None):
 
     eligible = [driver for driver in drivers if driver["id"] not in attempted
                 and (ride["route_code"] != "dakar_car" or
-                     (in_dakar_zone(driver["latitude"], driver["longitude"])
+                     (in_dakar_thies_zone(driver["latitude"], driver["longitude"])
                       and distance_km(ride["client_lat"], ride["client_lng"],
                                       driver["latitude"], driver["longitude"]) <= 20))]
     if not eligible:
@@ -1604,7 +1608,7 @@ class App(SimpleHTTPRequestHandler):
                           AND balance >= %s
                           AND NOT EXISTS (SELECT 1 FROM rides r WHERE r.driver_id=drivers.id AND r.status='accepted')
                     """, (int(time.time()) - 300, (quote["fare"] + 9) // 10)).fetchall()
-                available = sum(in_dakar_zone(d["latitude"], d["longitude"])
+                available = sum(in_dakar_thies_zone(d["latitude"], d["longitude"])
                                 and distance_km(quote["lat"], quote["lng"],
                                                 d["latitude"], d["longitude"]) <= 20
                                 for d in available)
@@ -2425,7 +2429,7 @@ class App(SimpleHTTPRequestHandler):
                           AND last_location_at >= %s AND balance >= %s
                           AND NOT EXISTS (SELECT 1 FROM rides r WHERE r.driver_id=drivers.id AND r.status='accepted')
                     """, (int(time.time()) - 300, fee)).fetchall()
-                if not any(in_dakar_zone(d["latitude"], d["longitude"])
+                if not any(in_dakar_thies_zone(d["latitude"], d["longitude"])
                            and distance_km(client_lat, client_lng, d["latitude"], d["longitude"]) <= 20
                            for d in nearby):
                     return self.sendj({"error": "Aucun chauffeur voiture disponible près du départ. Aucun paiement demandé."}, 409)

@@ -319,7 +319,7 @@ DAKAR • MOUDÉRY • BONDJI • DIAWARA • BAKEL • KHADÉ BÉRÉ • WAOUND
 
 <label>Service</label>
 <select id="route">
-<optgroup label="Voiture — Dakar et sa banlieue">
+<optgroup label="Voiture — Dakar jusqu’à Thiès">
 <option value="dakar_car">Voiture classique — prix selon trajet et circulation</option>
 </optgroup>
 
@@ -478,12 +478,12 @@ Minicar 14 places — Ziguinchor → Dakar — 150 000 F
 
 </select>
 <div id="dakarBooking" class="hidden" style="margin-top:15px;padding:15px;border:2px solid #fcd116;border-radius:15px;background:#082d1e">
-  <h3>🚗 Voiture à Dakar</h3>
-  <p class="sub">Dakar, Pikine, Guédiawaye, Keur Massar et Rufisque. Vous pouvez réserver pour une autre personne.</p>
+  <h3>🚗 Voiture de Dakar jusqu’à Thiès</h3>
+  <p class="sub">Dakar, Pikine, Guédiawaye, Keur Massar, Rufisque et Thiès. Vous pouvez réserver pour une autre personne.</p>
   <label for="dakarPickup">Adresse exacte de départ</label>
   <input id="dakarPickup" placeholder="Exemple : marché de Pikine, Pikine" autocomplete="street-address">
   <label for="dakarDestination">Adresse exacte d'arrivée</label>
-  <input id="dakarDestination" placeholder="Exemple : place de l'Indépendance, Dakar Plateau">
+  <input id="dakarDestination" placeholder="Exemple : Place de France, Thiès">
   <button type="button" id="dakarQuoteBtn" class="secondary">Calculer le prix avec la circulation</button>
   <div id="dakarQuoteInfo" class="gpsInfo" aria-live="polite"></div>
 </div>
@@ -673,6 +673,7 @@ S'inscrire comme chauffeur
 <option>Guédiawaye</option>
 <option>Keur Massar</option>
 <option>Rufisque</option>
+<option>Thiès</option>
 </select>
 
 <label>Type de véhicule</label>
@@ -1230,7 +1231,7 @@ try{
 const minicar = isMinicarRoute();
 const dakar = isDakarRoute();
 if(dakar && !dakarQuoteToken){
-  throw new Error('Calculez d’abord le prix du trajet à Dakar.');
+  throw new Error('Calculez d’abord le prix du trajet entre Dakar et Thiès.');
 }
 
 $('#orderSuccess').textContent = minicar
