@@ -281,14 +281,16 @@ button{
 html{scroll-behavior:smooth}
 body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--paper);color:var(--ink);line-height:1.45}
 .w{max-width:1120px;padding:18px 20px 40px}
-.hero{display:flex;align-items:center;gap:16px;min-height:78px;background:none;border:0;border-radius:0;padding:4px 2px 12px;margin:0}
-.hero small{display:block;color:#718077;font-size:10px;font-weight:800;letter-spacing:.16em}
-.hero h1{font-size:27px;line-height:1.05;letter-spacing:-.055em;margin:4px 0 2px;color:var(--green)}
-.hero h1 span{color:#c78c21}
-.hero p{margin:0;color:var(--muted);font-size:13px}
-.brand-mark{width:46px;height:46px;flex:none;display:flex;gap:4px;align-items:center;justify-content:center;background:var(--green);border-radius:15px;box-shadow:0 5px 14px #103d3324}
+.hero{display:flex;align-items:center;gap:17px;min-height:84px;background:radial-gradient(circle at 87% -70%,#3b8067 0%,transparent 42%),linear-gradient(115deg,#0c312a,#174839);border:1px solid #315d4b;border-radius:22px;padding:14px 25px;margin:0 0 10px;box-shadow:0 15px 34px #0b3b2c1c;overflow:hidden}
+.hero small{display:block;color:#d7c68f;font-size:10px;font-weight:800;letter-spacing:.16em}
+.hero h1{font-size:28px;line-height:1.05;letter-spacing:-.055em;margin:4px 0 2px;color:#fff}
+.hero h1 span{color:#efc76c}
+.hero p{margin:0;color:#dce9e0;font-size:13px}
+.brand-mark{width:47px;height:47px;flex:none;display:flex;gap:4px;align-items:center;justify-content:center;background:#ffffff1c;border:1px solid #ffffff45;border-radius:15px;box-shadow:0 5px 14px #082b1c33}
 .brand-mark span{height:19px;width:5px;border-radius:5px;background:#ffcc55;transform:rotate(25deg)}
 .brand-mark span:nth-child(2){height:27px;background:#fff}.brand-mark span:nth-child(3){background:#de7d61}
+.hero-message{margin-left:auto;display:grid;gap:4px;text-align:right;color:#fff;border-left:1px solid #ffffff3b;padding-left:24px}
+.hero-message strong{font-size:14px;letter-spacing:-.015em}.hero-message span{color:#c5ded0;font-size:12px}
 .card{background:#fff;color:var(--ink);border:1px solid var(--line);border-radius:24px;padding:28px;margin:0;box-shadow:0 10px 32px #143c2710}
 .card h2{font-size:23px;letter-spacing:-.035em;margin:0 0 14px;line-height:1.18}
 .card h3{letter-spacing:-.02em}
@@ -313,13 +315,14 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--gold);outline-offse
 .main-nav button.on:after{content:"";display:block;width:20px;height:2px;border-radius:2px;background:#ca9230;margin:4px auto -6px}
 .main-nav button:hover{background:#e9f0e9;color:var(--green)}
 .grid{grid-template-columns:minmax(0,1.55fr) minmax(265px,.85fr);gap:18px;align-items:start}
-.booking-intro{margin-bottom:22px}.booking-intro h2{font-size:clamp(25px,3vw,36px);margin:5px 0 6px}.booking-intro .sub{margin:0}
+.booking-intro{margin-bottom:19px}.booking-intro h2{font-size:clamp(25px,3vw,36px);margin:5px 0 6px}.booking-intro .sub{margin:0}
 .eyebrow{color:#937029;font-size:11px;font-weight:850;letter-spacing:.13em}
 .service-shortcuts{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
 .service-chip{margin:0;min-height:74px;background:#f8faf8;color:#40584b;border:1px solid var(--line);font-size:13px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:5px;line-height:1.2}
 .service-chip svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
-.service-chip.on,.service-chip.on:hover{background:#e6f1e9;color:var(--green);border-color:#4b9b72;box-shadow:inset 0 0 0 1px #4b9b72}
+.service-chip.on,.service-chip.on:hover{background:#e5f1e9;color:var(--green);border-color:#318367;box-shadow:inset 0 0 0 1px #318367,0 5px 12px #144d2e13}
 .service-chip:hover{background:#eef4ee}
+.service-hint{display:none}
 #dakarBooking,#minicarBooking>div{margin-top:18px;padding:20px;background:#f6f9f6;border:1px solid #dce7dd;border-radius:17px}
 #dakarBooking h3{font-size:18px;margin:0 0 5px}#dakarBooking h3 span{float:right;color:#53806a;font-size:12px;font-weight:750;letter-spacing:0;margin-top:5px}
 #dakarBooking .sub{margin:0 0 16px;font-size:13px}
@@ -332,6 +335,12 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--gold);outline-offse
 .fare-summary span{font-size:13px;color:var(--muted)}.fare-summary h3{margin:0;text-align:right;font-size:20px;color:var(--green)}
 #order{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;margin-top:15px;font-size:16px}
 .ride-status-card{position:sticky;top:91px}.ride-status-card h2{font-size:18px}.ride-status-card #status{line-height:1.6}
+.booking-guide{border-top:1px solid var(--line);padding-top:21px;margin-top:25px}
+.booking-guide h3{margin:4px 0 17px;font-size:18px;line-height:1.2}
+.booking-guide ol{list-style:none;padding:0;margin:0;display:grid;gap:17px}
+.booking-guide li{display:flex;align-items:flex-start;gap:12px;color:var(--muted);font-size:13px}
+.booking-guide li b{display:inline-grid;place-items:center;flex:none;width:26px;height:26px;border-radius:9px;background:#e8f1e9;color:var(--green);font-size:11px}
+.booking-guide li span{padding-top:4px}
 .row{border-color:var(--line)}
 #clientMap,#driverMap{border-color:var(--line)}
 .app-actions{margin:20px 0 26px}.app-actions button{background:white;border:1px solid var(--line);color:var(--green);min-height:45px;font-size:13px;margin:0;box-shadow:0 3px 12px #103d330b}
@@ -344,12 +353,16 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--gold);outline-offse
 .site-footer{border-top:1px solid var(--line);color:var(--muted);font-size:12px}.site-footer a{color:var(--green);margin:0 8px;display:inline-block;padding:5px 0}
 .hidden{display:none!important}
 @media(max-width:760px){
-  .w{padding:10px 14px 30px}.hero{min-height:66px}.hero h1{font-size:24px}
-  .grid,.promo-zone{grid-template-columns:1fr}.card{padding:20px;border-radius:20px}
+  .w{padding:10px 12px 30px}.hero{min-height:58px;padding:12px 15px;border-radius:17px}.hero h1{font-size:23px}.hero-message{display:none}
+  .grid,.promo-zone{grid-template-columns:1fr}.card{padding:19px;border-radius:20px}
   .ride-status-card{position:static}.main-nav button{font-size:13px;padding:7px 4px}.main-nav button span{display:inline}
-  .service-shortcuts{grid-template-columns:repeat(3,1fr)}
-  .service-chip{min-height:66px}.sponsors-grid{grid-template-columns:repeat(3,1fr)}
+  .nav.main-nav{margin-bottom:11px}
+  .service-shortcuts{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:8px;padding:2px 1px 7px;scrollbar-width:thin}
+  .service-chip{flex:0 0 106px;min-height:65px;scroll-snap-align:start}.service-hint{display:block;font-size:11px;color:var(--muted);margin:3px 0 -5px}
+  .sponsors-grid{grid-template-columns:repeat(3,1fr)}
   .sponsor-card{aspect-ratio:1/1}.app-actions{gap:8px}.app-actions button{min-width:140px}
+  #dakarBooking,#minicarBooking>div{padding:15px;margin-top:14px}#dakarBooking .sub{margin-bottom:10px}
+  .booking-intro{margin-bottom:14px}.booking-intro h2{font-size:26px}
 }
 @media(max-width:390px){.main-nav button{font-size:12px}.phone-row select{min-width:112px}.fare-summary{display:block}.fare-summary h3{text-align:left;margin-top:4px}}
 </style>
@@ -362,6 +375,7 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--gold);outline-offse
   <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
   <div><small>VOTRE MOBILITÉ AU SÉNÉGAL</small><h1>Soninkara<span>Go</span></h1>
   <p>Votre trajet, en toute confiance.</p></div>
+  <div class="hero-message"><strong>Votre prochain trajet commence ici.</strong><span>Choisissez, consultez le prix, commandez.</span></div>
 </div>
 
 <div class="nav main-nav">
@@ -385,6 +399,7 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--gold);outline-offse
   <button type="button" class="service-chip" data-service="minicar" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10H4Zm0-5h16M8 5v7m8-7v7M5 17v2h3v-2m8 0v2h3v-2"/></svg><span>Minicar</span></button>
   <button type="button" class="service-chip" data-service="delivery" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8 12 4l8 4v9l-8 4-8-4V8Zm0 0 8 4 8-4m-8 4v9m-4-15 8 4"/></svg><span>Livraison</span></button>
 </div>
+<p class="service-hint">Faites glisser pour voir tous les services →</p>
 
 <label for="route">Trajet et service</label>
 <select id="route">
@@ -659,6 +674,13 @@ Aucune course.
 <div id="clientGpsInfo" class="gpsInfo"></div>
 
 <div id="clientMap" class="hidden"></div>
+<div class="booking-guide">
+  <span class="eyebrow">EN TOUTE SIMPLICITÉ</span>
+  <h3>Votre course en 3 étapes</h3>
+  <ol><li><b>01</b><span>Choisissez votre service et votre trajet.</span></li>
+  <li><b>02</b><span>Consultez le prix avant de commander.</span></li>
+  <li><b>03</b><span>Suivez votre demande sur cette page.</span></li></ol>
+</div>
 </div>
 
 
@@ -1172,7 +1194,9 @@ function updateFare(){
     chip.setAttribute('aria-pressed', String(active));
   });
 
-  $('#fare').textContent = dakar ? 'Calculez le prix du trajet' : money(prices[code] || 0);
+  if(!dakar || !dakarQuoteToken){
+    $('#fare').textContent = dakar ? 'Calculez le prix du trajet' : money(prices[code] || 0);
+  }
   $('#dakarBooking').classList.toggle('hidden', !dakar);
   if(!dakar) clearDakarQuote();
 
@@ -1192,13 +1216,32 @@ $('#route').onchange = updateFare;
 const shortcutRoutes = {car:'dakar_car',moto:'moto_moudery_bondji',
   tricycle:'tricycle_moudery_local',minicar:'minicar_dakar_touba',
   delivery:'delivery_moudery_local'};
-$$('.service-chip').forEach(chip=>chip.addEventListener('click',()=>{
-  const selected = $('#route').value;
-  const service = chip.dataset.service;
-  if(service === 'car' ? !(selected === 'dakar_car' || selected.startsWith('car_'))
-    : !selected.startsWith(service + '_')) $('#route').value = shortcutRoutes[service];
+const routeGroups = [...$('#route').querySelectorAll('optgroup')].map(group=>group.cloneNode(true));
+function routeService(code){
+  return code.startsWith('minicar_') ? 'minicar'
+    : code.startsWith('moto_') ? 'moto'
+    : code.startsWith('tricycle_') ? 'tricycle'
+    : code.startsWith('delivery_') ? 'delivery' : 'car';
+}
+function showServiceRoutes(service){
+  const current = $('#route').value;
+  const groups = routeGroups.map(group=>{
+    const options = [...group.querySelectorAll('option')]
+      .filter(option=>routeService(option.value) === service);
+    if(!options.length) return null;
+    const filtered = group.cloneNode(false);
+    filtered.append(...options.map(option=>option.cloneNode(true)));
+    return filtered;
+  }).filter(Boolean);
+  $('#route').replaceChildren(...groups);
+  $('#route').value = [...$('#route').options].some(option=>option.value === current)
+    ? current : shortcutRoutes[service];
   updateFare();
+}
+$$('.service-chip').forEach(chip=>chip.addEventListener('click',()=>{
+  showServiceRoutes(chip.dataset.service);
 }));
+showServiceRoutes('car');
 
 $('#tripType').onchange = () => {
 

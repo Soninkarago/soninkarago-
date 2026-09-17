@@ -1,4 +1,4 @@
-const CACHE_NAME='soninkarago-v10-modern-booking';
+const CACHE_NAME='soninkarago-v11-refined-booking';
 const APP_SHELL=[
   '/',
   '/index.html',
