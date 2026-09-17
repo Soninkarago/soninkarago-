@@ -1,11 +1,10 @@
-const CACHE_NAME='soninkarago-v8-dakar-car';
+const CACHE_NAME='soninkarago-v10-premium-brand';
 const APP_SHELL=[
   '/',
   '/index.html',
   '/manifest.webmanifest',
   '/icon-192.png',
   '/icon-512.png',
-  '/IMG_0421.png',
   '/confidentialite',
   '/conditions',
   '/mentions-legales',
