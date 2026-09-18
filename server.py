@@ -2816,13 +2816,16 @@ class App(SimpleHTTPRequestHandler):
 
 
             token = make_token("driver", driver["name"], driver["id"])
+            response = {
+                "authenticated": True,
+                "name": driver["name"],
+                "vehicle": driver["vehicle"],
+                "village": driver["village"]
+            }
+            if str(self.headers.get("X-SoninkaraGo-App", "")).lower() in ("ios", "android", "mobile"):
+                response["access_token"] = token
             return self.sendj(
-                {
-                    "authenticated": True,
-                    "name": driver["name"],
-                    "vehicle": driver["vehicle"],
-                    "village": driver["village"]
-                },
+                response,
                 extra_headers=[("Set-Cookie", session_cookie(token))]
             )
 
@@ -2919,8 +2922,11 @@ class App(SimpleHTTPRequestHandler):
                 )
 
             token = make_token("admin", "Admin")
+            response = {"authenticated": True, "name": "Admin"}
+            if str(self.headers.get("X-SoninkaraGo-App", "")).lower() in ("ios", "android", "mobile"):
+                response["access_token"] = token
             return self.sendj(
-                {"authenticated": True, "name": "Admin"},
+                response,
                 extra_headers=[("Set-Cookie", session_cookie(token))]
             )
 
