@@ -103,80 +103,334 @@ def allow_request_shared(key, limit, window_seconds):
         return allow_request(key, limit, window_seconds)
 
 
-def in_dakar_thies_service_zone(lat, lng):
-    """Zone voiture SoninkaraGo : Dakar, banlieue, AIBD et axe jusqu'à Thiès."""
+
+
+URBAN_CAR_ZONES = {
+    "dakar": {
+        "label": "Dakar et proche banlieue",
+        "center": (14.7167, -17.4677),
+        "radius_km": 27,
+        "example": "Plateau, Parcelles Assainies, Pikine, Guédiawaye ou Keur Massar",
+    },
+    "rufisque": {
+        "label": "Rufisque et périphérie",
+        "center": (14.7167, -17.2667),
+        "radius_km": 18,
+        "example": "Rufisque, Bargny ou un quartier de la périphérie",
+    },
+    "thies": {
+        "label": "Thiès et périphérie",
+        "center": (14.7910, -16.9359),
+        "radius_km": 24,
+        "example": "Thiès ou un quartier de la périphérie",
+    },
+    "mbour": {
+        "label": "Mbour, Saly et périphérie",
+        "center": (14.4200, -16.9638),
+        "radius_km": 28,
+        "example": "Mbour, Saly ou un quartier de la Petite-Côte",
+    },
+    "saint_louis": {
+        "label": "Saint-Louis et périphérie",
+        "center": (16.0326, -16.4818),
+        "radius_km": 32,
+        "example": "Sor, île de Saint-Louis ou un quartier de la périphérie",
+    },
+    "ziguinchor": {
+        "label": "Ziguinchor et périphérie",
+        "center": (12.5833, -16.2667),
+        "radius_km": 32,
+        "example": "Néma, Lyndiane, Castor ou un quartier de la périphérie",
+    },
+    "touba": {
+        "label": "Touba, Mbacké et périphérie",
+        "center": (14.8667, -15.8833),
+        "radius_km": 35,
+        "example": "Touba, Mbacké ou un quartier de la périphérie",
+    },
+    "kaolack": {
+        "label": "Kaolack et périphérie",
+        "center": (14.1514, -16.0726),
+        "radius_km": 32,
+        "example": "Kaolack, Kahone ou un quartier de la périphérie",
+    },
+    "louga": {
+        "label": "Louga et périphérie",
+        "center": (15.6187, -16.2244),
+        "radius_km": 28,
+        "example": "Louga ou un quartier de la périphérie",
+    },
+    "matam": {
+        "label": "Matam, Ourossogui et périphérie",
+        "center": (15.6559, -13.2554),
+        "radius_km": 38,
+        "example": "Matam, Ourossogui ou un quartier de la périphérie",
+    },
+    "tambacounda": {
+        "label": "Tambacounda et périphérie",
+        "center": (13.7707, -13.6673),
+        "radius_km": 30,
+        "example": "Tambacounda ou un quartier de la périphérie",
+    },
+    "kolda": {
+        "label": "Kolda et périphérie",
+        "center": (12.8939, -14.9413),
+        "radius_km": 28,
+        "example": "Kolda ou un quartier de la périphérie",
+    },
+    "diourbel": {
+        "label": "Diourbel et périphérie",
+        "center": (14.6561, -16.2346),
+        "radius_km": 24,
+        "example": "Diourbel ou un quartier de la périphérie",
+    },
+    "fatick": {
+        "label": "Fatick et périphérie",
+        "center": (14.3390, -16.4111),
+        "radius_km": 22,
+        "example": "Fatick ou un quartier de la périphérie",
+    },
+    "richard_toll": {
+        "label": "Richard-Toll et périphérie",
+        "center": (16.4625, -15.7008),
+        "radius_km": 22,
+        "example": "Richard-Toll ou un quartier de la périphérie",
+    },
+    "kaffrine": {
+        "label": "Kaffrine et périphérie",
+        "center": (14.1059, -15.5508),
+        "radius_km": 22,
+        "example": "Kaffrine ou un quartier de la périphérie",
+    },
+    "kedougou": {
+        "label": "Kédougou et périphérie",
+        "center": (12.5556, -12.1808),
+        "radius_km": 24,
+        "example": "Kédougou ou un quartier de la périphérie",
+    },
+    "sedhiou": {
+        "label": "Sédhiou et périphérie",
+        "center": (12.7081, -15.5569),
+        "radius_km": 22,
+        "example": "Sédhiou ou un quartier de la périphérie",
+    },
+    "tivaouane": {
+        "label": "Tivaouane et périphérie",
+        "center": (14.9500, -16.8167),
+        "radius_km": 20,
+        "example": "Tivaouane ou un quartier de la périphérie",
+    },
+}
+
+
+def in_urban_service_zone(zone_code, lat, lng):
+    zone = URBAN_CAR_ZONES.get(str(zone_code or "").strip())
+    if not zone:
+        return False
     try:
         lat = float(lat)
         lng = float(lng)
     except (TypeError, ValueError):
         return False
-
-    # Rectangle volontairement large pour couvrir toutes les rues de Dakar,
-    # Pikine, Guédiawaye, Keur Massar, Rufisque, Diamniadio, l'AIBD et Thiès.
-    # Le calcul Google Routes vérifie ensuite qu'un itinéraire routier réel existe.
-    return 14.45 <= lat <= 15.10 and -17.65 <= lng <= -16.75
+    center_lat, center_lng = zone["center"]
+    return distance_km(center_lat, center_lng, lat, lng) <= float(zone["radius_km"])
 
 
-def dakar_address(query):
-    """Résout une adresse dans la zone voiture Dakar → AIBD → Thiès."""
+def detect_urban_zone(lat, lng):
+    """Retourne la zone desservie la plus logique à partir du point de départ."""
+    candidates = []
+    for code, zone in URBAN_CAR_ZONES.items():
+        d = distance_km(zone["center"][0], zone["center"][1], lat, lng)
+        if d <= float(zone["radius_km"]):
+            # Choisir la zone dont le centre est le plus proche évite les conflits
+            # Dakar/Rufisque ou Touba/Mbacké sans demander à l'utilisateur.
+            candidates.append((d, code))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][1]
+
+
+def urban_zone_bounds(zone_code):
+    zone = URBAN_CAR_ZONES.get(zone_code)
+    if not zone:
+        return None
+    lat, lng = zone["center"]
+    delta_lat = float(zone["radius_km"]) / 111.0
+    delta_lng = float(zone["radius_km"]) / max(
+        35.0, 111.0 * math.cos(math.radians(lat))
+    )
+    return f"{lat-delta_lat},{lng-delta_lng}|{lat+delta_lat},{lng+delta_lng}"
+
+
+def geocode_senegal(query, bias_zone=None):
+    """Géocodage Sénégal, éventuellement biaisé vers la zone de départ."""
     from urllib.parse import urlencode
     address = str(query or "").strip()[:180]
     if len(address) < 3:
-        raise ValueError("Indiquez une adresse, une rue ou un lieu précis.")
-    url = "https://maps.googleapis.com/maps/api/geocode/json?" + urlencode({
-        "address": address + ", Sénégal", "components": "country:SN",
-        "key": MAPS_API_KEY, "language": "fr", "region": "sn"
-    })
+        raise ValueError("Indiquez une rue, un quartier, un commerce ou un lieu précis.")
+
+    params = {
+        "address": f"{address}, Sénégal",
+        "components": "country:SN",
+        "key": MAPS_API_KEY,
+        "language": "fr",
+        "region": "sn",
+    }
+    if bias_zone:
+        bounds = urban_zone_bounds(bias_zone)
+        if bounds:
+            params["bounds"] = bounds
+
+    url = "https://maps.googleapis.com/maps/api/geocode/json?" + urlencode(params)
     try:
         with urlopen(url, timeout=10) as response:
             result = json.load(response)
     except (URLError, TimeoutError) as exc:
         raise RuntimeError("Recherche d'adresse momentanément indisponible.") from exc
+
     if result.get("status") != "OK" or not result.get("results"):
-        raise ValueError("Lieu introuvable. Ajoutez le quartier ou la ville, par exemple : Rue 10 Pikine, Grande Mosquée de Dakar, AIBD ou Thiès.")
+        raise ValueError("Lieu introuvable. Vérifiez le nom de la rue, du quartier ou du lieu.")
 
-    for place in result["results"]:
-        coords = place.get("geometry", {}).get("location", {})
-        lat, lng = coords.get("lat"), coords.get("lng")
-        if in_dakar_thies_service_zone(lat, lng):
-            return {"address": place["formatted_address"][:200], "lat": lat, "lng": lng}
+    # Si on a un biais de ville, privilégier un résultat dans cette zone.
+    if bias_zone:
+        for place in result["results"]:
+            coords = place.get("geometry", {}).get("location", {})
+            lat, lng = coords.get("lat"), coords.get("lng")
+            if in_urban_service_zone(bias_zone, lat, lng):
+                return {
+                    "address": place["formatted_address"][:200],
+                    "lat": lat,
+                    "lng": lng,
+                }
 
-    raise ValueError("Ce lieu est hors de la zone voiture SoninkaraGo. La zone couvre Dakar et toute sa banlieue, l'aéroport Blaise Diagne (AIBD) et l'axe jusqu'à Thiès.")
+    place = result["results"][0]
+    coords = place.get("geometry", {}).get("location", {})
+    return {
+        "address": place["formatted_address"][:200],
+        "lat": coords.get("lat"),
+        "lng": coords.get("lng"),
+    }
 
 
-def dakar_quote(pickup, destination):
+def urban_quote(zone_code, pickup, destination):
     if not MAPS_API_KEY or not AUTH_SECRET:
-        raise RuntimeError("Devis Dakar indisponible : configuration des itinéraires nécessaire.")
-    origin = dakar_address(pickup)
-    arrival = dakar_address(destination)
+        raise RuntimeError("Calcul du trajet momentanément indisponible.")
+
+    # Mode Uber-like : la ville est détectée à partir du départ.
+    if str(zone_code or "").strip() in URBAN_CAR_ZONES:
+        requested_zone = str(zone_code).strip()
+        origin = geocode_senegal(pickup, requested_zone)
+        detected_zone = detect_urban_zone(origin["lat"], origin["lng"])
+        if detected_zone != requested_zone:
+            raise ValueError(
+                f"Le départ ne semble pas se trouver dans {URBAN_CAR_ZONES[requested_zone]['label']}."
+            )
+    else:
+        origin = geocode_senegal(pickup)
+        detected_zone = detect_urban_zone(origin["lat"], origin["lng"])
+        if not detected_zone:
+            raise ValueError(
+                "SoninkaraGo n'a pas encore activé la voiture à la demande à ce point de départ."
+            )
+
+    zone = URBAN_CAR_ZONES[detected_zone]
+    # La destination est biaisée vers la ville de départ pour les noms ambigus,
+    # mais peut être dans une autre zone SoninkaraGo.
+    arrival = geocode_senegal(destination, detected_zone)
+    destination_zone = detect_urban_zone(arrival["lat"], arrival["lng"])
+    if not destination_zone:
+        raise ValueError(
+            "La destination n'est pas encore dans une zone voiture SoninkaraGo."
+        )
+
     payload = json.dumps({
-        "origin": {"location": {"latLng": {"latitude": origin["lat"], "longitude": origin["lng"]}}},
-        "destination": {"location": {"latLng": {"latitude": arrival["lat"], "longitude": arrival["lng"]}}},
-        "travelMode": "DRIVE", "routingPreference": "TRAFFIC_AWARE",
-        "departureTime": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 30))
+        "origin": {
+            "location": {
+                "latLng": {
+                    "latitude": origin["lat"],
+                    "longitude": origin["lng"]
+                }
+            }
+        },
+        "destination": {
+            "location": {
+                "latLng": {
+                    "latitude": arrival["lat"],
+                    "longitude": arrival["lng"]
+                }
+            }
+        },
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE",
+        "departureTime": time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 30)
+        ),
     }).encode()
-    req = Request("https://routes.googleapis.com/directions/v2:computeRoutes", payload,
-        headers={"Content-Type": "application/json", "X-Goog-Api-Key": MAPS_API_KEY,
-                 "X-Goog-FieldMask": "routes.distanceMeters,routes.duration"}, method="POST")
+
+    req = Request(
+        "https://routes.googleapis.com/directions/v2:computeRoutes",
+        payload,
+        headers={
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": MAPS_API_KEY,
+            "X-Goog-FieldMask": "routes.distanceMeters,routes.duration",
+        },
+        method="POST",
+    )
     try:
         with urlopen(req, timeout=12) as response:
             route = json.load(response)["routes"][0]
     except (URLError, TimeoutError, KeyError, IndexError, ValueError) as exc:
-        raise RuntimeError("Impossible de calculer le trajet avec la circulation actuelle.") from exc
+        raise RuntimeError(
+            "Impossible de calculer le trajet avec la circulation actuelle."
+        ) from exc
+
     km = int(route["distanceMeters"]) / 1000
     minutes = math.ceil(float(route["duration"].rstrip("s")) / 60)
-    if km < .4 or km > 125 or minutes < 1:
-        raise ValueError("Vérifiez les lieux de départ et d'arrivée. La zone voiture couvre Dakar, sa banlieue, l'AIBD et Thiès.")
-    fare = max(DAKAR_MIN_FARE, DAKAR_BASE_FARE + km * DAKAR_PRICE_PER_KM
-               + minutes * DAKAR_PRICE_PER_MINUTE)
+    if km < .4 or km > 500 or minutes < 1:
+        raise ValueError("Vérifiez le départ et la destination.")
+
+    fare = max(
+        DAKAR_MIN_FARE,
+        DAKAR_BASE_FARE
+        + km * DAKAR_PRICE_PER_KM
+        + minutes * DAKAR_PRICE_PER_MINUTE,
+    )
     fare = int(math.ceil(fare / 100) * 100)
-    quote = {"pickup": origin["address"], "destination": arrival["address"],
-             "lat": origin["lat"], "lng": origin["lng"],
-             "distance_km": round(km, 1), "duration_min": minutes,
-             "fare": fare, "exp": int(time.time()) + 300}
+
+    quote = {
+        "zone": detected_zone,
+        "zone_label": zone["label"],
+        "destination_zone": destination_zone,
+        "destination_zone_label": URBAN_CAR_ZONES[destination_zone]["label"],
+        "pickup": origin["address"],
+        "destination": arrival["address"],
+        "lat": origin["lat"],
+        "lng": origin["lng"],
+        "distance_km": round(km, 1),
+        "duration_min": minutes,
+        "fare": fare,
+        "exp": int(time.time()) + 300,
+    }
     body = b64(json.dumps(quote, separators=(",", ":")).encode())
-    signature = hmac.new(AUTH_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
+    signature = hmac.new(
+        AUTH_SECRET.encode(), body.encode(), hashlib.sha256
+    ).hexdigest()
     return quote, body + "." + signature
+
+
+# Compatibilité avec les anciennes courses / liens Dakar.
+def in_dakar_thies_service_zone(lat, lng):
+    return in_urban_service_zone("dakar", lat, lng)
+
+
+def dakar_address(query):
+    return geocode_senegal(query, "dakar")
+
+
+def dakar_quote(pickup, destination):
+    return urban_quote("dakar", pickup, destination)
 
 
 def verify_dakar_quote(token):
@@ -186,6 +440,9 @@ def verify_dakar_quote(token):
         if not hmac.compare_digest(signature, expected):
             raise ValueError()
         quote = json.loads(b64decode(body))
+        quote.setdefault("zone", "dakar")
+        if quote.get("zone") not in URBAN_CAR_ZONES:
+            raise ValueError()
         if quote["exp"] < time.time():
             raise ValueError()
         return quote
@@ -1106,11 +1363,28 @@ def assign_next_driver(conn, ride_id, now=None):
         (ride["vehicle"], now - 300, int(ride["fee"] or 0))
     ).fetchall()
 
-    eligible = [driver for driver in drivers if driver["id"] not in attempted
-                and (ride["route_code"] != "dakar_car" or
-                     (in_dakar_zone(driver["latitude"], driver["longitude"])
-                      and distance_km(ride["client_lat"], ride["client_lng"],
-                                      driver["latitude"], driver["longitude"]) <= 20))]
+    urban_zone_code = None
+    if ride["route_code"] == "dakar_car":
+        urban_zone_code = "dakar"
+    elif str(ride["route_code"] or "").startswith("urban_car_"):
+        urban_zone_code = str(ride["route_code"]).removeprefix("urban_car_")
+
+    eligible = [
+        driver for driver in drivers
+        if driver["id"] not in attempted
+        and (
+            not urban_zone_code
+            or (
+                in_urban_service_zone(
+                    urban_zone_code, driver["latitude"], driver["longitude"]
+                )
+                and distance_km(
+                    ride["client_lat"], ride["client_lng"],
+                    driver["latitude"], driver["longitude"]
+                ) <= 20
+            )
+        )
+    ]
     if not eligible:
         conn.execute(
             """
@@ -1866,11 +2140,20 @@ class App(SimpleHTTPRequestHandler):
                       updated_at=EXCLUDED.updated_at, revoked=FALSE
                 """, (endpoint,p256dh,auth,ua,now,now))
             return self.sendj({"ok": True})
-        if path == "/api/dakar/quote":
-            if not self.check_rate("dakar-quote", 20, 3600):
+        if path in ("/api/urban/quote", "/api/dakar/quote"):
+            if not self.check_rate("urban-quote", 30, 3600):
                 return
             try:
-                quote, token = dakar_quote(data.get("pickup"), data.get("destination"))
+                zone_code = (
+                    "dakar" if path == "/api/dakar/quote"
+                    else str(data.get("zone") or "").strip()
+                )
+                quote, token = urban_quote(
+                    zone_code or None,
+                    data.get("pickup"),
+                    data.get("destination")
+                )
+                zone_code = quote["zone"]
                 with db() as conn:
                     available = conn.execute("""
                         SELECT latitude, longitude FROM drivers
@@ -1878,14 +2161,26 @@ class App(SimpleHTTPRequestHandler):
                           AND latitude IS NOT NULL AND longitude IS NOT NULL
                           AND last_location_at >= %s
                           AND balance >= %s
-                          AND NOT EXISTS (SELECT 1 FROM rides r WHERE r.driver_id=drivers.id AND r.status='accepted')
+                          AND NOT EXISTS (
+                              SELECT 1 FROM rides r
+                              WHERE r.driver_id=drivers.id AND r.status='accepted'
+                          )
                     """, (int(time.time()) - 300, (quote["fare"] + 9) // 10)).fetchall()
-                available = sum(in_dakar_zone(d["latitude"], d["longitude"])
-                                and distance_km(quote["lat"], quote["lng"],
-                                                d["latitude"], d["longitude"]) <= 20
-                                for d in available)
-                return self.sendj({**quote, "quote_token": token,
-                                   "drivers_online": available})
+                available = sum(
+                    in_urban_service_zone(
+                        zone_code, d["latitude"], d["longitude"]
+                    )
+                    and distance_km(
+                        quote["lat"], quote["lng"],
+                        d["latitude"], d["longitude"]
+                    ) <= 20
+                    for d in available
+                )
+                return self.sendj({
+                    **quote,
+                    "quote_token": token,
+                    "drivers_online": available,
+                })
             except ValueError as exc:
                 return self.sendj({"error": str(exc)}, 400)
             except RuntimeError as exc:
@@ -2572,12 +2867,15 @@ class App(SimpleHTTPRequestHandler):
             ).strip()
 
             route = ROUTES.get(route_code)
-            dakar_ride = route_code == "dakar_car"
-            if dakar_ride:
+            urban_ride = route_code == "dakar_car" or route_code.startswith("urban_car_")
+            if urban_ride:
                 try:
                     quote = verify_dakar_quote(str(data.get("quote_token", "")))
                 except ValueError as exc:
                     return self.sendj({"error": str(exc)}, 400)
+                expected_zone = "dakar" if route_code == "dakar_car" else route_code.removeprefix("urban_car_")
+                if quote.get("zone", "dakar") != expected_zone:
+                    return self.sendj({"error": "Le devis ne correspond pas à la ville choisie."}, 400)
                 route = {"service": "Voiture taxi", "pickup": quote["pickup"],
                          "destination": quote["destination"], "fare": quote["fare"]}
 
@@ -2689,8 +2987,8 @@ class App(SimpleHTTPRequestHandler):
                 data.get("client_lat"),
                 data.get("client_lng")
             )
-            if dakar_ride:
-                # Le départ du trajet, pas le téléphone du réservant, détermine l'attribution.
+            if urban_ride:
+                # Le départ géocodé du trajet détermine l'attribution.
                 client_coords = (quote["lat"], quote["lng"])
             if not is_minicar and not client_coords:
                 return self.sendj(
@@ -2700,7 +2998,8 @@ class App(SimpleHTTPRequestHandler):
             client_lat, client_lng = client_coords or (None, None)
 
             driver_available = True
-            if dakar_ride:
+            if urban_ride:
+                urban_zone_code = quote.get("zone", "dakar")
                 with db() as conn:
                     nearby = conn.execute("""
                         SELECT latitude, longitude FROM drivers
@@ -2710,7 +3009,7 @@ class App(SimpleHTTPRequestHandler):
                           AND NOT EXISTS (SELECT 1 FROM rides r WHERE r.driver_id=drivers.id AND r.status='accepted')
                     """, (int(time.time()) - 300, fee)).fetchall()
                 driver_available = any(
-                    in_dakar_zone(d["latitude"], d["longitude"])
+                    in_urban_service_zone(urban_zone_code, d["latitude"], d["longitude"])
                     and distance_km(client_lat, client_lng, d["latitude"], d["longitude"]) <= 20
                     for d in nearby
                 )

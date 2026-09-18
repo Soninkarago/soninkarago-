@@ -232,7 +232,7 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
   <div class="hero-points">
     <span>Prix affichés à l’avance</span>
     <span>Chauffeur localisé</span>
-    <span>Moudéry · Diawara · Bakel · Dakar · AIBD · Thiès</span>
+    <span>Dakar · Thiès · Mbour · Saint-Louis · Touba · Kaolack · Ziguinchor · Tambacounda · Kolda · Matam · et d’autres villes</span>
   </div>
 </div>
 
@@ -288,7 +288,7 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 <p class="sub">Vous pouvez réserver pour vous-même ou pour un proche.</p>
 
 <div class="service-shortcuts" aria-label="Choisir rapidement un service">
-  <button type="button" class="service-shortcut" data-route="dakar_car"><strong>Voiture</strong><span>Dakar, banlieue, AIBD et Thiès</span></button>
+  <button type="button" class="service-shortcut" data-route="urban_car"><strong>Voiture</strong><span>Course à la demande dans les grandes villes</span></button>
   <button type="button" class="service-shortcut" data-route="moto_moudery_bondji"><strong>Moto / Taxi</strong><span>Moudéry, Bondji, Diawara, Bakel</span></button>
   <button type="button" class="service-shortcut" data-route="minicar_dakar_moudery"><strong>Minicar</strong><span>Longues distances et groupes</span></button>
   <button type="button" class="service-shortcut" data-route="delivery_moudery_local"><strong>Livraison</strong><span>Transport de matériel à Moudéry</span></button>
@@ -321,8 +321,8 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 
 <label>Service</label>
 <select id="route">
-<optgroup label="Voiture — Dakar, AIBD et Thiès">
-<option value="dakar_car">Voiture classique — prix selon trajet et circulation</option>
+<optgroup label="Voiture classique — course à la demande">
+<option value="urban_car">Voiture classique — choisissez votre ville et votre trajet</option>
 </optgroup>
 
 <optgroup label="Moto-taxi">
@@ -479,12 +479,15 @@ Minicar 14 places — Ziguinchor → Dakar — 150 000 F
 
 </select>
 <div id="dakarBooking" class="hidden" style="margin-top:15px;padding:15px;border:1px solid #e2e3df;border-radius:15px;background:#082d1e">
-  <h3>Voiture — Dakar jusqu’à Thiès</h3>
-  <p class="sub">Toutes les rues de Dakar et de sa banlieue sont couvertes, puis l’axe vers Diamniadio, l’aéroport international Blaise Diagne (AIBD) et Thiès. Vous pouvez réserver pour une autre personne.</p>
-  <label for="dakarPickup">Adresse exacte de départ</label>
-  <input id="dakarPickup" placeholder="Exemple : Rue 10, Pikine" autocomplete="street-address">
-  <label for="dakarDestination">Adresse exacte d'arrivée</label>
-  <input id="dakarDestination" placeholder="Exemple : Grande Mosquée de Dakar, AIBD ou Thiès">
+  <h3>Voiture classique</h3>
+  <p class="sub">Indiquez simplement votre départ et votre destination. SoninkaraGo détecte automatiquement la ville et cherche les lieux autour de vous.</p>
+
+  <div id="urbanZoneInfo" class="gpsInfo">Ville détectée automatiquement à partir du départ.</div>
+
+  <label for="dakarPickup">Départ</label>
+  <input id="dakarPickup" placeholder="Rue, quartier, commerce ou lieu connu" autocomplete="street-address">
+  <label for="dakarDestination">Destination</label>
+  <input id="dakarDestination" placeholder="Rue, quartier, commerce ou lieu connu">
   <div id="favoriteRoutes" class="quick-row" aria-label="Trajets favoris"></div>
   <div class="inline-actions">
     <button type="button" id="saveFavoriteRoute" class="secondary">Enregistrer ce trajet</button>
@@ -1429,11 +1432,22 @@ function isMinicarRoute(){
   return $('#route').value.startsWith('minicar_');
 }
 
-function isDakarRoute(){return $('#route').value === 'dakar_car';}
+let detectedUrbanZone='';
+let detectedUrbanZoneLabel='';
+function isDakarRoute(){return $('#route').value === 'urban_car';}
+function selectedUrbanZone(){return detectedUrbanZone || '';}
+function updateUrbanZoneInfo(label=''){
+  detectedUrbanZoneLabel=label||'';
+  $('#urbanZoneInfo').textContent=label
+    ? 'Zone détectée : '+label+'.'
+    : 'Ville détectée automatiquement à partir du départ.';
+}
 
 function clearDakarQuote(){
   dakarQuoteRequest += 1;
   dakarQuoteToken = '';
+  detectedUrbanZone='';
+  updateUrbanZoneInfo('');
   $('#dakarQuoteInfo').textContent = '';
   if(isDakarRoute()) $('#fare').textContent = 'Calculez le prix du trajet';
 }
@@ -1447,9 +1461,11 @@ $('#dakarQuoteBtn').onclick=async()=>{
   const destination = $('#dakarDestination').value.trim();
   $('#dakarQuoteInfo').textContent='Calcul du trajet et de la circulation…';
   try{
-    const q=await post('/dakar/quote',{pickup,destination});
+    const q=await post('/urban/quote',{pickup,destination});
     if(requestId !== dakarQuoteRequest || !isDakarRoute()) return;
     dakarQuoteToken=q.quote_token;
+    detectedUrbanZone=q.zone||'';
+    updateUrbanZoneInfo(q.zone_label||'');
     $('#fare').textContent=money(q.fare);
     $('#dakarQuoteInfo').textContent=
       q.pickup+' → '+q.destination+' · '+q.distance_km+' km · '+q.duration_min+
@@ -1611,7 +1627,7 @@ try{
 const minicar = isMinicarRoute();
 const dakar = isDakarRoute();
 if(dakar && !dakarQuoteToken){
-  throw new Error('Calculez d’abord le prix du trajet à Dakar.');
+  throw new Error('Calculez d’abord le prix du trajet dans la ville choisie.');
 }
 
 $('#orderSuccess').textContent = minicar
@@ -1692,7 +1708,7 @@ const r=await post(
   ...ridePhoneFields,
 
   route_code:
-    $('#route').value,
+    dakar ? ('urban_car_'+selectedUrbanZone()) : $('#route').value,
   quote_token: dakar ? dakarQuoteToken : '',
 
   payment:
@@ -1754,7 +1770,7 @@ const recentLabel = dakar
   ? `${$('#dakarPickup').value.trim()} → ${$('#dakarDestination').value.trim()}`
   : $('#route').selectedOptions[0]?.textContent?.trim() || 'Trajet SoninkaraGo';
 saveRecentTrip({
-  route_code:$('#route').value,
+  route_code:dakar ? 'urban_car' : $('#route').value,
   name:$('#name').value.trim(),
   phone:$('#phone').value.trim(),
   phone_region:$('#phoneCountry').value,
