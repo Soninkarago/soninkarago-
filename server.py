@@ -894,13 +894,6 @@ ROUTES = {
         "pickup": "Ziguinchor",
         "destination": "Dakar",
         "fare": 150000
-    },
-    # LIVRAISON
-    "delivery_moudery_local": {
-        "service": "Livraison de matériel",
-        "pickup": "Moudéry",
-        "destination": "Moudéry - livraison locale",
-        "fare": 1000
     }
 }
 
@@ -1157,6 +1150,30 @@ def init():
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_request_rate_limits_updated
             ON request_rate_limits(updated_at)
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS cancelled_at BIGINT
+        """)
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS cancel_reason TEXT
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS support_requests(
+                id TEXT PRIMARY KEY,
+                ride_id TEXT,
+                phone TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL,
+                message TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                created_at BIGINT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_support_requests_ride
+            ON support_requests(ride_id, created_at DESC)
         """)
 
 
@@ -1818,7 +1835,12 @@ class App(SimpleHTTPRequestHandler):
                 "eta_distance_meters": eta_distance_meters,
                 "eta_calculated_at": eta_calculated_at,
                 "eta_source": eta_source,
-                "eta_gps_fresh": bool(driver_gps_fresh)
+                "eta_gps_fresh": bool(driver_gps_fresh),
+                "payment_status": row.get("payment_status", "unpaid"),
+                "can_cancel": (
+                    row.get("status") in ("searching", "offered", "payment_failed", "payment_canceled")
+                    and row.get("payment_status", "unpaid") in ("unpaid", "failed")
+                )
             })
 
 
@@ -2269,7 +2291,7 @@ class App(SimpleHTTPRequestHandler):
                     return self.sendj({"ok": True})
 
                 ride = conn.execute(
-                    "SELECT id, fare, deposit_amount FROM rides WHERE id=%s FOR UPDATE",
+                    "SELECT id, fare, deposit_amount, status FROM rides WHERE id=%s FOR UPDATE",
                     (ref_command,)
                 ).fetchone()
 
@@ -2286,6 +2308,10 @@ class App(SimpleHTTPRequestHandler):
                     return self.sendj({"error": "Montant incorrect"}, 409)
 
                 if event == "sale_complete":
+                    if ride.get("status") in ("cancelled", "canceled"):
+                        return self.sendj({
+                            "error": "Réservation annulée : paiement à vérifier manuellement."
+                        }, 409)
                     conn.execute(
                         """
                         UPDATE rides
@@ -2312,6 +2338,139 @@ class App(SimpleHTTPRequestHandler):
                     return self.sendj({"error": "Événement IPN inconnu"}, 400)
 
             return self.sendj({"ok": True})
+
+
+        # CLIENT : annulation avant acceptation / avant paiement validé.
+        if (
+            path.startswith("/api/rides/")
+            and path.endswith("/cancel")
+        ):
+            if not self.check_rate("ride-cancel", 10, 3600):
+                return
+            ride_id = path.split("/")[3]
+            tracking_token = str(data.get("tracking_token") or "").strip()
+            reason = str(data.get("reason") or "Annulation client").strip()[:180]
+
+            with db() as conn:
+                ride = conn.execute(
+                    """
+                    SELECT id, status, payment_status, tracking_token
+                    FROM rides
+                    WHERE id=%s
+                    FOR UPDATE
+                    """,
+                    (ride_id,)
+                ).fetchone()
+
+                if not ride:
+                    return self.sendj({"error": "Course introuvable"}, 404)
+
+                if not tracking_token or not hmac.compare_digest(
+                    str(ride.get("tracking_token") or ""),
+                    tracking_token
+                ):
+                    return self.sendj({"error": "Non autorisé"}, 401)
+
+                if ride["status"] in ("cancelled", "canceled"):
+                    return self.sendj({"ok": True, "status": "cancelled"})
+
+                if ride["status"] in ("accepted", "arriving", "in_progress", "completed"):
+                    return self.sendj({
+                        "error": "La course ne peut plus être annulée automatiquement à ce stade."
+                    }, 409)
+
+                if ride.get("payment_status") not in ("unpaid", "failed"):
+                    return self.sendj({
+                        "error": "Un paiement a déjà été enregistré. L'annulation automatique est bloquée pour protéger votre paiement."
+                    }, 409)
+
+                if ride["status"] == "awaiting_payment":
+                    return self.sendj({
+                        "error": "Terminez ou annulez d'abord le paiement sécurisé en cours."
+                    }, 409)
+
+                conn.execute(
+                    """
+                    UPDATE rides
+                    SET status='cancelled',
+                        cancelled_at=%s,
+                        cancel_reason=%s,
+                        offered_driver_id=NULL,
+                        offer_expires_at=NULL
+                    WHERE id=%s
+                    """,
+                    (int(time.time()), reason, ride_id)
+                )
+
+            return self.sendj({"ok": True, "status": "cancelled"})
+
+        # CLIENT : signaler un problème sans appeler un numéro personnel.
+        if path == "/api/support":
+            if not self.check_rate("support", 8, 3600):
+                return
+
+            ride_id = str(data.get("ride_id") or "").strip()[:80]
+            tracking_token = str(data.get("tracking_token") or "").strip()
+            category = str(data.get("category") or "other").strip()[:60]
+            message = str(data.get("message") or "").strip()[:1000]
+
+            if len(message) < 8:
+                return self.sendj({"error": "Décrivez le problème en quelques mots."}, 400)
+
+            allowed_categories = {
+                "driver": "Chauffeur",
+                "payment": "Paiement",
+                "pickup": "Départ / destination",
+                "app": "Application / site",
+                "other": "Autre",
+            }
+            if category not in allowed_categories:
+                category = "other"
+
+            phone = ""
+            if ride_id:
+                with db() as conn:
+                    ride = conn.execute(
+                        """
+                        SELECT phone, tracking_token
+                        FROM rides
+                        WHERE id=%s
+                        """,
+                        (ride_id,)
+                    ).fetchone()
+                if not ride:
+                    return self.sendj({"error": "Course introuvable"}, 404)
+                if not tracking_token or not hmac.compare_digest(
+                    str(ride.get("tracking_token") or ""),
+                    tracking_token
+                ):
+                    return self.sendj({"error": "Non autorisé"}, 401)
+                phone = str(ride.get("phone") or "")[:40]
+
+            request_id = "SUP-" + secrets.token_hex(6).upper()
+            with db() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO support_requests(
+                        id, ride_id, phone, category, message, status, created_at
+                    )
+                    VALUES(%s,%s,%s,%s,%s,'open',%s)
+                    """,
+                    (
+                        request_id,
+                        ride_id or None,
+                        phone,
+                        allowed_categories[category],
+                        message,
+                        int(time.time()),
+                    )
+                )
+
+            return self.sendj({
+                "ok": True,
+                "request_id": request_id,
+                "message": "Votre signalement a bien été enregistré."
+            }, 201)
 
         if path == "/api/logout":
             return self.sendj(

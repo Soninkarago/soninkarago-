@@ -291,7 +291,6 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
   <button type="button" class="service-shortcut" data-route="urban_car"><strong>Voiture</strong><span>Course à la demande dans les grandes villes</span></button>
   <button type="button" class="service-shortcut" data-route="moto_moudery_bondji"><strong>Moto / Taxi</strong><span>Moudéry, Bondji, Diawara, Bakel</span></button>
   <button type="button" class="service-shortcut" data-route="minicar_dakar_moudery"><strong>Minicar</strong><span>Longues distances et groupes</span></button>
-  <button type="button" class="service-shortcut" data-route="delivery_moudery_local"><strong>Livraison</strong><span>Transport de matériel à Moudéry</span></button>
 </div>
 
 <label>Pour qui réservez-vous ?</label>
@@ -472,11 +471,6 @@ Minicar 14 places — Dakar → Ziguinchor — 150 000 F
 Minicar 14 places — Ziguinchor → Dakar — 150 000 F
 </option>
 </optgroup>
-
-<optgroup label="Livraison">
-<option value="delivery_moudery_local">Livraison de matériel dans Moudéry — 1 000 F</option>
-</optgroup>
-
 </select>
 <div id="dakarBooking" class="hidden" style="margin-top:15px;padding:15px;border:1px solid #e2e3df;border-radius:15px;background:#082d1e">
   <h3>Voiture classique</h3>
@@ -603,6 +597,29 @@ Activer ma position
 
 <div class="inline-actions">
   <button type="button" id="shareRide" class="secondary hidden">Partager le trajet</button>
+  <button type="button" id="cancelRide" class="secondary hidden">Annuler la course</button>
+  <button type="button" id="reportRideIssue" class="secondary hidden">Signaler un problème</button>
+</div>
+<div id="cancelRideInfo" class="gpsInfo"></div>
+
+<div id="supportRideCard" class="help-card hidden">
+  <h3>Signaler un problème</h3>
+  <p class="sub">Votre demande sera liée à cette course. Aucun appel vers un numéro personnel n’est nécessaire.</p>
+  <label for="supportCategory">Sujet</label>
+  <select id="supportCategory">
+    <option value="driver">Chauffeur</option>
+    <option value="payment">Paiement</option>
+    <option value="pickup">Départ / destination</option>
+    <option value="app">Application / site</option>
+    <option value="other">Autre</option>
+  </select>
+  <label for="supportMessage">Votre message</label>
+  <textarea id="supportMessage" maxlength="1000" placeholder="Expliquez brièvement le problème"></textarea>
+  <div class="inline-actions">
+    <button type="button" id="sendSupportRequest">Envoyer le signalement</button>
+    <button type="button" id="closeSupportRequest" class="secondary">Fermer</button>
+  </div>
+  <div id="supportResult" class="gpsInfo" aria-live="polite"></div>
 </div>
 
 <div id="clientMap" class="hidden"></div>
@@ -1388,8 +1405,7 @@ minicar_dakar_saint_louis:70000,
 minicar_saint_louis_dakar:70000,
 
 minicar_dakar_ziguinchor:150000,
-minicar_ziguinchor_dakar:150000,  
-delivery_moudery_local:1000
+minicar_ziguinchor_dakar:150000,
 };
 
 let lastRide=localStorage.getItem('lastRide')||null;
@@ -1525,24 +1541,37 @@ updateFare();
 async function request(path,options={}){
 
     options.credentials='same-origin';
-    const r = await fetch('/api' + path, options);
-
-    let data = {};
+    const method=(options.method||'GET').toUpperCase();
+    let r;
 
     try{
-        data = await r.json();
+      r=await fetch('/api'+path,options);
+    }catch(firstError){
+      if(method!=='GET') throw new Error('Connexion interrompue. Vérifiez votre réseau puis réessayez.');
+      await new Promise(resolve=>setTimeout(resolve,700));
+      try{
+        r=await fetch('/api'+path,options);
+      }catch(secondError){
+        throw new Error('Connexion interrompue. Vérifiez votre réseau puis réessayez.');
+      }
+    }
+
+    let data={};
+
+    try{
+        data=await r.json();
     }catch(e){
-        data = {};
+        data={};
     }
 
     if(!r.ok){
 
-        const err = new Error(
+        const err=new Error(
             data.error || 'Une erreur est survenue'
         );
 
-        err.status = r.status;
-        err.data = data;
+        err.status=r.status;
+        err.data=data;
 
         throw err;
     }
@@ -1903,10 +1932,76 @@ function updateDriverContact(r){
   }
 }
 
+
+function renderClientActions(r){
+  const cancelBtn=$('#cancelRide');
+  const reportBtn=$('#reportRideIssue');
+  if(!cancelBtn||!reportBtn) return;
+
+  if(r){
+    reportBtn.classList.remove('hidden');
+  }else{
+    reportBtn.classList.add('hidden');
+  }
+
+  if(r && r.can_cancel){
+    cancelBtn.classList.remove('hidden');
+  }else{
+    cancelBtn.classList.add('hidden');
+  }
+}
+
+$('#cancelRide')?.addEventListener('click',async()=>{
+  if(!lastRide||!trackingToken) return;
+  const ok=confirm('Annuler cette course ?');
+  if(!ok) return;
+  const info=$('#cancelRideInfo');
+  info.textContent='Annulation en cours…';
+  try{
+    await post('/rides/'+encodeURIComponent(lastRide)+'/cancel',{
+      tracking_token:trackingToken,
+      reason:'Annulation demandée par le client'
+    });
+    info.textContent='Course annulée.';
+    await refreshClient();
+  }catch(e){
+    info.textContent=e.message;
+  }
+});
+
+$('#reportRideIssue')?.addEventListener('click',()=>{
+  $('#supportRideCard')?.classList.remove('hidden');
+  $('#supportResult').textContent='';
+});
+
+$('#closeSupportRequest')?.addEventListener('click',()=>{
+  $('#supportRideCard')?.classList.add('hidden');
+});
+
+$('#sendSupportRequest')?.addEventListener('click',async()=>{
+  if(!lastRide||!trackingToken) return;
+  const result=$('#supportResult');
+  const message=$('#supportMessage').value.trim();
+  result.textContent='Envoi en cours…';
+  try{
+    const r=await post('/support',{
+      ride_id:lastRide,
+      tracking_token:trackingToken,
+      category:$('#supportCategory').value,
+      message
+    });
+    result.textContent='Signalement enregistré. Référence : '+r.request_id+'.';
+    $('#supportMessage').value='';
+  }catch(e){
+    result.textContent=e.message;
+  }
+});
+
 async function refreshClient(){
 
 if(!lastRide){
-return;
+  renderClientActions(null);
+  return;
 }
 
 try{
@@ -1932,6 +2027,7 @@ if(r.status!==lastKnownRideStatus){
 const label=statusLabel(r.status);
 updateDriverContact(r);
 updateLiveEta(r);
+renderClientActions(r);
 
 $('#status').innerHTML=
 `<b>${esc(r.id)}</b><br>`+
