@@ -36,7 +36,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.09.18-v16-secure-session-shared-rate-limit"
+APP_VERSION = "2026.09.18-v20-live-eta"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "1000"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "220"))
@@ -192,6 +192,51 @@ def verify_dakar_quote(token):
     except (ValueError, KeyError, TypeError, binascii.Error, UnicodeDecodeError):
         raise ValueError("Le devis a expiré. Recalculez le prix avant de commander.")
 
+
+
+def compute_live_eta(driver_lat, driver_lng, client_lat, client_lng, vehicle="Voiture taxi"):
+    """ETA routier basé sur la position GPS réelle du chauffeur et le trafic Google actuel.
+
+    Aucun temps inventé : si Google Routes ne répond pas, on renvoie None.
+    """
+    if not MAPS_API_KEY:
+        return None
+    coords = [driver_lat, driver_lng, client_lat, client_lng]
+    try:
+        dlat, dlng, clat, clng = [float(v) for v in coords]
+    except (TypeError, ValueError):
+        return None
+
+    travel_mode = "TWO_WHEELER" if vehicle == "Moto-taxi" else "DRIVE"
+    payload = {
+        "origin": {"location": {"latLng": {"latitude": dlat, "longitude": dlng}}},
+        "destination": {"location": {"latLng": {"latitude": clat, "longitude": clng}}},
+        "travelMode": travel_mode,
+        "routingPreference": "TRAFFIC_AWARE",
+        "departureTime": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 15))
+    }
+    req = Request(
+        "https://routes.googleapis.com/directions/v2:computeRoutes",
+        json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": MAPS_API_KEY,
+            "X-Goog-FieldMask": "routes.distanceMeters,routes.duration"
+        },
+        method="POST"
+    )
+    try:
+        with urlopen(req, timeout=8) as response:
+            result = json.load(response)
+        route = result["routes"][0]
+        seconds = max(0, int(round(float(str(route["duration"]).rstrip("s")))))
+        meters = max(0, int(route.get("distanceMeters", 0)))
+        if seconds <= 0:
+            return None
+        return {"eta_seconds": seconds, "eta_distance_meters": meters}
+    except Exception as exc:
+        print(f"ETA Google Routes indisponible: {exc}", flush=True)
+        return None
 
 def request_paytech_payment(ride_id, route, amount, payment, client_name):
     if not PAYTECH_API_KEY or not PAYTECH_API_SECRET:
@@ -678,6 +723,23 @@ def init():
         conn.execute("""
             ALTER TABLE rides
             ADD COLUMN IF NOT EXISTS driver_location_at BIGINT
+        """)
+
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS eta_seconds INTEGER
+        """)
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS eta_distance_meters INTEGER
+        """)
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS eta_calculated_at BIGINT
+        """)
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS eta_driver_location_at BIGINT
         """)
 
         conn.execute("""
@@ -1376,7 +1438,12 @@ class App(SimpleHTTPRequestHandler):
             try:
                 with db() as conn:
                     row = conn.execute(
-                        "SELECT * FROM rides WHERE id=%s",
+                        """
+                        SELECT r.*, d.phone AS driver_phone
+                        FROM rides r
+                        LEFT JOIN drivers d ON d.id = r.driver_id
+                        WHERE r.id=%s
+                        """,
                         (ride_id,)
                     ).fetchone()
             except psycopg.Error as exc:
@@ -1403,9 +1470,61 @@ class App(SimpleHTTPRequestHandler):
             ):
                 return self.sendj({"error": "Non autorisé"}, 401)
 
-            # Ne renvoyer au client que les informations utiles au suivi.
-            # L'utilisation de get() garde cette route compatible avec les
-            # anciennes versions de la table PostgreSQL.
+            # ETA réel : calculé à partir de la dernière position GPS du chauffeur
+            # et de la circulation routière actuelle. On ne fabrique jamais une
+            # estimation locale si Google Routes n'est pas disponible.
+            eta_seconds = None
+            eta_distance_meters = None
+            eta_calculated_at = None
+            eta_source = "unavailable"
+            now = int(time.time())
+            driver_loc_at = int(row.get("driver_location_at") or 0)
+            driver_gps_fresh = driver_loc_at > 0 and (now - driver_loc_at) <= 60
+            eta_status = row.get("status") in ("accepted", "arriving")
+            have_coords = all(row.get(k) is not None for k in (
+                "driver_lat", "driver_lng", "client_lat", "client_lng"
+            ))
+
+            if eta_status and driver_gps_fresh and have_coords:
+                cached_at = int(row.get("eta_calculated_at") or 0)
+                cached_driver_loc_at = int(row.get("eta_driver_location_at") or 0)
+                cache_valid = (
+                    row.get("eta_seconds") is not None
+                    and cached_at > 0
+                    and (now - cached_at) < 15
+                    and cached_driver_loc_at == driver_loc_at
+                )
+                if cache_valid:
+                    elapsed = max(0, now - cached_at)
+                    eta_seconds = max(0, int(row.get("eta_seconds") or 0) - elapsed)
+                    eta_distance_meters = int(row.get("eta_distance_meters") or 0)
+                    eta_calculated_at = cached_at
+                    eta_source = "google_routes"
+                else:
+                    eta = compute_live_eta(
+                        row.get("driver_lat"), row.get("driver_lng"),
+                        row.get("client_lat"), row.get("client_lng"),
+                        row.get("vehicle", "Voiture taxi")
+                    )
+                    if eta:
+                        eta_seconds = eta["eta_seconds"]
+                        eta_distance_meters = eta["eta_distance_meters"]
+                        eta_calculated_at = now
+                        eta_source = "google_routes"
+                        try:
+                            with db() as conn:
+                                conn.execute(
+                                    """
+                                    UPDATE rides
+                                    SET eta_seconds=%s, eta_distance_meters=%s,
+                                        eta_calculated_at=%s, eta_driver_location_at=%s
+                                    WHERE id=%s
+                                    """,
+                                    (eta_seconds, eta_distance_meters, now, driver_loc_at, ride_id)
+                                )
+                        except psycopg.Error as exc:
+                            print(f"Cache ETA non enregistré pour {ride_id}: {exc}", flush=True)
+
             return self.sendj({
                 "id": row.get("id", ride_id),
                 "pickup": row.get("pickup", ""),
@@ -1414,7 +1533,18 @@ class App(SimpleHTTPRequestHandler):
                 "payment": row.get("payment", ""),
                 "fare": row.get("fare", 0),
                 "status": row.get("status", "searching"),
-                "driver_name": row.get("driver_name", "")
+                "driver_name": row.get("driver_name", ""),
+                "driver_phone": (
+                    row.get("driver_phone", "")
+                    if row.get("status") in ("accepted", "arriving", "in_progress")
+                    else ""
+                ),
+                "driver_location_at": row.get("driver_location_at"),
+                "eta_seconds": eta_seconds,
+                "eta_distance_meters": eta_distance_meters,
+                "eta_calculated_at": eta_calculated_at,
+                "eta_source": eta_source,
+                "eta_gps_fresh": bool(driver_gps_fresh)
             })
 
 
@@ -1603,7 +1733,12 @@ class App(SimpleHTTPRequestHandler):
             try:
                 with db() as conn:
                     ride = conn.execute(
-                        "SELECT * FROM rides WHERE id=%s",
+                        """
+                        SELECT r.*, d.phone AS driver_phone
+                        FROM rides r
+                        LEFT JOIN drivers d ON d.id = r.driver_id
+                        WHERE r.id=%s
+                        """,
                         (ride_id,)
                     ).fetchone()
             except psycopg.Error as exc:
@@ -1634,6 +1769,11 @@ class App(SimpleHTTPRequestHandler):
             return self.sendj({
                 "status": ride.get("status", "searching"),
                 "driver_name": ride.get("driver_name", ""),
+                "driver_phone": (
+                    ride.get("driver_phone", "")
+                    if ride.get("status") in ("accepted", "arriving", "in_progress")
+                    else ""
+                ),
                 "driver_lat": ride.get("driver_lat"),
                 "driver_lng": ride.get("driver_lng"),
                 "updated_at": ride.get("driver_location_at")

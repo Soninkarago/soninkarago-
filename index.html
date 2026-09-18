@@ -193,6 +193,29 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 }
 
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+
+/* V17 — parcours grand public */
+.client-intro{padding:18px;border:1px solid var(--line);border-radius:18px;background:linear-gradient(180deg,#fff,#f7f8f5);margin-bottom:14px}
+.client-intro h1{font-size:clamp(26px,7vw,38px);line-height:1.03;margin:0 0 7px;letter-spacing:-.03em}
+.client-intro p{margin:0;color:var(--muted);font-size:14px;line-height:1.5}
+.how-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}
+.how-step{border:1px solid var(--line);background:#fff;border-radius:12px;padding:9px 8px;font-size:12px;line-height:1.3;text-align:center}
+.how-step strong{display:block;font-size:13px;color:var(--ink);margin-bottom:2px}
+.service-shortcuts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0 15px}
+.service-shortcut{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:14px;padding:12px;text-align:left;min-height:64px}
+.service-shortcut strong{display:block;font-size:13px;margin-bottom:3px}.service-shortcut span{font-size:11.5px;color:var(--muted);line-height:1.25}
+.service-shortcut.active{border-color:var(--brand);box-shadow:0 0 0 2px rgba(11,122,85,.12)}
+.segmented{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px;background:#f1f2ef;border-radius:13px;margin-top:7px}
+.segmented button{background:transparent;color:var(--ink);border:0;border-radius:10px;padding:10px;font-weight:700}
+.segmented button.active{background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.info-panel{border:1px solid var(--line);border-radius:14px;padding:12px;background:#fafbf9;margin-top:10px}
+.quick-row{display:flex;gap:8px;overflow-x:auto;padding:2px 0 6px;scrollbar-width:none}.quick-row::-webkit-scrollbar{display:none}
+.quick-chip{white-space:nowrap;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:999px;padding:9px 12px;font-size:12px;font-weight:700}
+.inline-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.inline-actions button,.inline-actions a{width:auto;flex:1 1 140px;text-align:center;text-decoration:none}
+.network-note{display:none;margin:0 0 12px;padding:10px 12px;border-radius:12px;background:#fff6d9;border:1px solid #ead697;font-size:12px;color:#5b4a12}.network-note.show{display:block}
+.help-card{margin-top:14px;padding:14px;border-radius:16px;background:#101411;color:#fff}.help-card h3{margin:0 0 5px;font-size:16px}.help-card p{margin:0 0 10px;color:#d8ded9;font-size:12.5px;line-height:1.45}.help-card .inline-actions a{background:#fff;color:#101411;border-radius:12px;padding:10px 12px;font-weight:800}
+.recent-trip{display:none}.recent-trip.show{display:block}
+@media(max-width:480px){.how-steps{grid-template-columns:1fr}.service-shortcuts{grid-template-columns:1fr 1fr}.client-intro{padding:15px}.client-intro h1{font-size:28px}}
 </style>
 </head>
 
@@ -249,9 +272,44 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 <section id="client">
 <div class="grid">
 
+<div class="client-intro" style="grid-column:1/-1">
+  <h1>Où allez-vous ?</h1>
+  <p>Choisissez votre trajet, voyez le prix, puis confirmez. SoninkaraGo s’occupe du reste.</p>
+  <div class="how-steps" aria-label="Comment réserver">
+    <div class="how-step"><strong>1. Choisissez</strong>Votre type de trajet</div>
+    <div class="how-step"><strong>2. Vérifiez</strong>Le lieu et le prix</div>
+    <div class="how-step"><strong>3. Confirmez</strong>Votre réservation</div>
+  </div>
+</div>
+<div id="networkNote" class="network-note" style="grid-column:1/-1">Connexion faible détectée. SoninkaraGo reste utilisable ; évitez simplement de fermer la page pendant la réservation.</div>
+
 <div class="card">
 <h2>Réserver un trajet</h2>
+<p class="sub">Vous pouvez réserver pour vous-même ou pour un proche.</p>
 
+<div class="service-shortcuts" aria-label="Choisir rapidement un service">
+  <button type="button" class="service-shortcut" data-route="dakar_car"><strong>Voiture</strong><span>Dakar, banlieue, AIBD et Thiès</span></button>
+  <button type="button" class="service-shortcut" data-route="moto_moudery_bondji"><strong>Moto / Taxi</strong><span>Moudéry, Bondji, Diawara, Bakel</span></button>
+  <button type="button" class="service-shortcut" data-route="minicar_dakar_moudery"><strong>Minicar</strong><span>Longues distances et groupes</span></button>
+  <button type="button" class="service-shortcut" data-route="delivery_moudery_local"><strong>Livraison</strong><span>Transport de matériel à Moudéry</span></button>
+</div>
+
+<label>Pour qui réservez-vous ?</label>
+<div class="segmented" id="bookingFor">
+  <button type="button" class="active" data-value="self">Pour moi</button>
+  <button type="button" data-value="other">Pour un proche</button>
+</div>
+<div id="beneficiaryFields" class="info-panel hidden">
+  <label>Nom du passager</label>
+  <input id="beneficiaryName" autocomplete="name" placeholder="Nom de la personne qui voyage">
+  <label>Téléphone du passager</label>
+  <div class="phone-row">
+    <select id="beneficiaryCountry" aria-label="Indicatif du pays du passager"></select>
+    <input id="beneficiaryPhone" type="tel" autocomplete="tel-national" placeholder="Numéro du passager" inputmode="tel">
+  </div>
+</div>
+
+<label>Vos coordonnées</label>
 <label>Nom</label>
 <input id="name" autocomplete="name" placeholder="Votre nom">
 
@@ -427,7 +485,11 @@ Minicar 14 places — Ziguinchor → Dakar — 150 000 F
   <input id="dakarPickup" placeholder="Exemple : Rue 10, Pikine" autocomplete="street-address">
   <label for="dakarDestination">Adresse exacte d'arrivée</label>
   <input id="dakarDestination" placeholder="Exemple : Grande Mosquée de Dakar, AIBD ou Thiès">
-  <button type="button" id="dakarQuoteBtn" class="secondary">Calculer le prix avec la circulation</button>
+  <div id="favoriteRoutes" class="quick-row" aria-label="Trajets favoris"></div>
+  <div class="inline-actions">
+    <button type="button" id="saveFavoriteRoute" class="secondary">Enregistrer ce trajet</button>
+    <button type="button" id="dakarQuoteBtn" class="secondary">Voir le prix</button>
+  </div>
   <div id="dakarQuoteInfo" class="gpsInfo" aria-live="polite"></div>
 </div>
 <div id="minicarBooking" class="hidden">
@@ -516,6 +578,13 @@ Minicar 14 places — Ziguinchor → Dakar — 150 000 F
 <div id="orderError" class="error"></div>
 <div id="orderSuccess" class="success"></div>
 </div>
+<div id="recentTripCard" class="card recent-trip">
+<h2>Votre dernier trajet</h2>
+<div id="recentTripText" class="sub"></div>
+<div class="inline-actions">
+  <button type="button" id="reorderRide" class="secondary">Recommander ce trajet</button>
+</div>
+</div>
 <div class="card">
 <h2>Suivi de votre trajet</h2>
 
@@ -529,7 +598,23 @@ Activer ma position
 
 <div id="clientGpsInfo" class="gpsInfo"></div>
 
+<div class="inline-actions">
+  <button type="button" id="shareRide" class="secondary hidden">Partager le trajet</button>
+</div>
+
 <div id="clientMap" class="hidden"></div>
+<div id="driverContactCard" class="help-card hidden">
+  <h3>Votre chauffeur</h3>
+  <p id="driverContactText">Les coordonnées du chauffeur apparaîtront ici dès qu’il aura accepté la course.</p>
+  <div class="inline-actions">
+    <a id="callDriver" class="hidden" href="#">Appeler le chauffeur</a>
+    <a id="whatsappDriver" class="hidden" href="#" target="_blank" rel="noopener">WhatsApp chauffeur</a>
+  </div>
+</div>
+<div id="liveEtaCard" class="help-card hidden" aria-live="polite">
+  <h3>Arrivée du chauffeur</h3>
+  <p id="liveEtaText">Calcul de l’arrivée en cours…</p>
+</div>
 </div>
 
 
@@ -831,7 +916,7 @@ const phoneOptions = PHONE_COUNTRIES.map(([region, dial])=>({
   dial,
   name:countryNames ? countryNames.of(region) : region
 })).sort((a,b)=>a.name.localeCompare(b.name,'fr'));
-for(const id of ['phoneCountry','driverPhoneCountry','registerPhoneCountry']){
+for(const id of ['phoneCountry','beneficiaryCountry','driverPhoneCountry','registerPhoneCountry']){
   const select=$('#'+id);
   for(const country of phoneOptions){
     const option=document.createElement('option');
@@ -849,6 +934,97 @@ function phoneFields(numberId, countryId){
   }
   return {phone, phone_region:$('#'+countryId).value};
 }
+
+
+let bookingForValue='self';
+for(const btn of $$('#bookingFor button')){
+  btn.addEventListener('click',()=>{
+    bookingForValue=btn.dataset.value;
+    $$('#bookingFor button').forEach(b=>b.classList.toggle('active',b===btn));
+    $('#beneficiaryFields').classList.toggle('hidden',bookingForValue!=='other');
+  });
+}
+
+$$('.service-shortcut').forEach(btn=>btn.addEventListener('click',()=>{
+  $('#route').value=btn.dataset.route;
+  updateFare();
+  $$('.service-shortcut').forEach(b=>b.classList.toggle('active',b===btn));
+  $('#route').scrollIntoView({behavior:'smooth',block:'center'});
+}));
+
+function favoriteRoutes(){
+  try{return JSON.parse(localStorage.getItem('favoriteRoutes')||'[]')}catch(e){return []}
+}
+function renderFavoriteRoutes(){
+  const box=$('#favoriteRoutes'); if(!box) return;
+  const favs=favoriteRoutes(); box.innerHTML='';
+  favs.forEach((f,i)=>{
+    const b=document.createElement('button'); b.type='button'; b.className='quick-chip';
+    b.textContent=(f.pickup+' → '+f.destination).slice(0,62);
+    b.onclick=()=>{ $('#dakarPickup').value=f.pickup; $('#dakarDestination').value=f.destination; clearDakarQuote(); };
+    box.appendChild(b);
+  });
+}
+$('#saveFavoriteRoute')?.addEventListener('click',()=>{
+  const pickup=$('#dakarPickup').value.trim(), destination=$('#dakarDestination').value.trim();
+  if(!pickup||!destination){ $('#dakarQuoteInfo').textContent='Indiquez d’abord le départ et la destination.'; return; }
+  const favs=favoriteRoutes().filter(f=>!(f.pickup===pickup&&f.destination===destination));
+  favs.unshift({pickup,destination}); localStorage.setItem('favoriteRoutes',JSON.stringify(favs.slice(0,3)));
+  renderFavoriteRoutes(); $('#dakarQuoteInfo').textContent='Trajet enregistré dans vos favoris.';
+});
+renderFavoriteRoutes();
+
+function saveRecentTrip(data){
+  localStorage.setItem('recentTrip',JSON.stringify(data));
+  renderRecentTrip();
+}
+function renderRecentTrip(){
+  const card=$('#recentTripCard'), text=$('#recentTripText'); if(!card||!text) return;
+  let r=null; try{r=JSON.parse(localStorage.getItem('recentTrip')||'null')}catch(e){}
+  if(!r){card.classList.remove('show');return;}
+  card.classList.add('show');
+  text.textContent=r.label || 'Dernier trajet enregistré';
+}
+$('#reorderRide')?.addEventListener('click',()=>{
+  let r=null; try{r=JSON.parse(localStorage.getItem('recentTrip')||'null')}catch(e){}
+  if(!r) return;
+  if(r.route_code) $('#route').value=r.route_code;
+  if(r.name) $('#name').value=r.name;
+  if(r.phone) $('#phone').value=r.phone;
+  if(r.phone_region) $('#phoneCountry').value=r.phone_region;
+  if(r.payment) $('#payment').value=r.payment;
+  if(r.pickup) $('#dakarPickup').value=r.pickup;
+  if(r.destination) $('#dakarDestination').value=r.destination;
+  updateFare(); clearDakarQuote();
+  $('#route').scrollIntoView({behavior:'smooth',block:'center'});
+});
+renderRecentTrip();
+
+$('#shareRide')?.addEventListener('click',()=>{
+  if(!lastRide) return;
+
+  let recent=null;
+  try{ recent=JSON.parse(localStorage.getItem('recentTrip')||'null'); }catch(e){}
+
+  const parts=['Je partage mon trajet SoninkaraGo.'];
+  if(recent?.pickup) parts.push('Départ : '+recent.pickup+'.');
+  if(recent?.destination) parts.push('Destination : '+recent.destination+'.');
+  if(recent?.label && !recent?.pickup && !recent?.destination) parts.push('Trajet : '+recent.label+'.');
+  parts.push('Référence : '+lastRide+'.');
+  parts.push('SoninkaraGo : '+location.origin);
+
+  const msg=parts.join(' ');
+  window.open('https://wa.me/?text='+encodeURIComponent(msg),'_blank','noopener');
+});
+
+function updateNetworkNote(){
+  const note=$('#networkNote'); if(!note) return;
+  const c=navigator.connection||navigator.mozConnection||navigator.webkitConnection;
+  const slow=!navigator.onLine || (c && ['slow-2g','2g'].includes(c.effectiveType));
+  note.classList.toggle('show',!!slow);
+}
+window.addEventListener('online',updateNetworkNote); window.addEventListener('offline',updateNetworkNote);
+(navigator.connection||{}).addEventListener?.('change',updateNetworkNote); updateNetworkNote();
 
 let installPrompt=null;
 const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -1214,12 +1390,14 @@ delivery_moudery_local:1000
 };
 
 let lastRide=localStorage.getItem('lastRide')||null;
+if(lastRide) $('#shareRide')?.classList.remove('hidden');
 let driverToken='';
 let adminToken='';
 let currentDriver='';
 let trackingToken =
 localStorage.getItem('trackingToken') || '';
 let lastKnownRideStatus='';
+let liveEtaTargetMs=0;
 
 let activeDriverRide = null;
 
@@ -1492,13 +1670,26 @@ if(minicar){
 
 }
 
+const bookerName=$('#name').value.trim() || 'Client';
+const bookerPhone=phoneFields('phone','phoneCountry');
+let rideClientName=bookerName;
+let ridePhoneFields=bookerPhone;
+let otherPassengerNote='';
+if(bookingForValue==='other'){
+  const beneficiaryName=$('#beneficiaryName').value.trim();
+  if(!beneficiaryName) throw new Error('Indiquez le nom de la personne qui voyage.');
+  const beneficiaryPhone=phoneFields('beneficiaryPhone','beneficiaryCountry');
+  rideClientName=beneficiaryName;
+  ridePhoneFields=beneficiaryPhone;
+  otherPassengerNote=`Réservation faite par ${bookerName} (${bookerPhone.phone}).`;
+}
+
 const r=await post(
 '/rides',
 {
-  client_name:
-    $('#name').value.trim() || 'Client',
+  client_name: rideClientName,
 
-  ...phoneFields('phone','phoneCountry'),
+  ...ridePhoneFields,
 
   route_code:
     $('#route').value,
@@ -1541,7 +1732,7 @@ const r=await post(
     minicar ? $('#luggage').value : '',
 
   booking_note:
-    minicar ? $('#bookingNote').value.trim() : '',
+    [otherPassengerNote, minicar ? $('#bookingNote').value.trim() : ''].filter(Boolean).join(' ').slice(0,300),
 
   client_lat:
     dispatchCoords ? dispatchCoords.lat : null,
@@ -1552,12 +1743,26 @@ const r=await post(
 );
 
 lastRide=r.id;
+$('#shareRide')?.classList.remove('hidden');
 localStorage.setItem('lastRideIsDakar', dakar ? '1' : '0');
 
 localStorage.setItem(
 'lastRide',
 lastRide
 );
+const recentLabel = dakar
+  ? `${$('#dakarPickup').value.trim()} → ${$('#dakarDestination').value.trim()}`
+  : $('#route').selectedOptions[0]?.textContent?.trim() || 'Trajet SoninkaraGo';
+saveRecentTrip({
+  route_code:$('#route').value,
+  name:$('#name').value.trim(),
+  phone:$('#phone').value.trim(),
+  phone_region:$('#phoneCountry').value,
+  payment:$('#payment').value,
+  pickup:dakar?$('#dakarPickup').value.trim():'',
+  destination:dakar?$('#dakarDestination').value.trim():'',
+  label:recentLabel
+});
 trackingToken = r.tracking_token || '';
 
 localStorage.setItem(
@@ -1592,6 +1797,96 @@ $('#orderError').textContent=e.message;
 };
 
 
+
+function normalizePhoneForWhatsApp(phone){
+  return String(phone || '').replace(/[^0-9]/g,'');
+}
+
+
+function formatEtaCountdown(seconds){
+  const s=Math.max(0,Math.floor(Number(seconds)||0));
+  const m=Math.floor(s/60);
+  const r=s%60;
+  if(m>=60){
+    const hh=Math.floor(m/60);
+    const mm=m%60;
+    return hh+' h '+String(mm).padStart(2,'0')+' min';
+  }
+  if(m>0) return m+' min '+String(r).padStart(2,'0')+' s';
+  return r+' s';
+}
+
+function renderLiveEta(){
+  const card=$('#liveEtaCard');
+  const text=$('#liveEtaText');
+  if(!card||!text) return;
+  if(!liveEtaTargetMs) return;
+  const remaining=Math.max(0,Math.round((liveEtaTargetMs-Date.now())/1000));
+  card.classList.remove('hidden');
+  if(remaining<=20){
+    text.textContent='Votre chauffeur est presque arrivé. La position et la circulation continuent d’être actualisées.';
+  }else{
+    text.textContent='Arrivée estimée dans '+formatEtaCountdown(remaining)+'. Calcul basé sur la position GPS réelle du chauffeur et la circulation actuelle.';
+  }
+}
+
+function updateLiveEta(r){
+  const card=$('#liveEtaCard');
+  const text=$('#liveEtaText');
+  if(!card||!text) return;
+  const active=r && ['accepted','arriving'].includes(r.status);
+  if(!active){
+    liveEtaTargetMs=0;
+    card.classList.add('hidden');
+    return;
+  }
+  card.classList.remove('hidden');
+  if(!r.eta_gps_fresh){
+    liveEtaTargetMs=0;
+    text.textContent='Mise à jour de la position du chauffeur… Le temps d’arrivée s’affichera dès que son GPS sera actualisé.';
+    return;
+  }
+  if(Number.isFinite(Number(r.eta_seconds)) && Number(r.eta_seconds)>0 && r.eta_source==='google_routes'){
+    liveEtaTargetMs=Date.now()+Number(r.eta_seconds)*1000;
+    renderLiveEta();
+    return;
+  }
+  liveEtaTargetMs=0;
+  text.textContent='Calcul de l’arrivée en cours… Aucune durée approximative ne sera affichée sans données GPS et trafic à jour.';
+}
+
+function updateDriverContact(r){
+  const card=$('#driverContactCard');
+  const text=$('#driverContactText');
+  const call=$('#callDriver');
+  const wa=$('#whatsappDriver');
+  if(!card || !text || !call || !wa) return;
+
+  const accepted = r && ['accepted','arriving','in_progress'].includes(r.status);
+  const phone = r && r.driver_phone ? String(r.driver_phone).trim() : '';
+
+  if(!accepted || !phone){
+    card.classList.add('hidden');
+    call.classList.add('hidden');
+    wa.classList.add('hidden');
+    call.removeAttribute('href');
+    wa.removeAttribute('href');
+    return;
+  }
+
+  card.classList.remove('hidden');
+  text.textContent = (r.driver_name ? r.driver_name + ' a accepté votre course.' : 'Votre chauffeur a accepté votre course.') + ' Vous pouvez maintenant le contacter directement.';
+  call.href = 'tel:' + phone;
+  call.classList.remove('hidden');
+  const waPhone = normalizePhoneForWhatsApp(phone);
+  if(waPhone){
+    wa.href = 'https://wa.me/' + waPhone;
+    wa.classList.remove('hidden');
+  }else{
+    wa.classList.add('hidden');
+  }
+}
+
 async function refreshClient(){
 
 if(!lastRide){
@@ -1619,6 +1914,8 @@ if(r.status!==lastKnownRideStatus){
 }
 
 const label=statusLabel(r.status);
+updateDriverContact(r);
+updateLiveEta(r);
 
 $('#status').innerHTML=
 `<b>${esc(r.id)}</b><br>`+
@@ -2965,6 +3262,7 @@ if(lastRide && trackingToken && localStorage.getItem('lastRideIsDakar') !== '1')
     $('#clientGpsBtn').classList.remove('hidden');
 }
 setInterval(updateOfferCountdowns,1000);
+setInterval(renderLiveEta,1000);
 setInterval(
     ()=>{
 
