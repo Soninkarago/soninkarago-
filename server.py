@@ -13,6 +13,7 @@ import secrets
 import mimetypes
 import threading
 import math
+from http.cookies import SimpleCookie
 from collections import defaultdict, deque
 import psycopg
 from psycopg.rows import dict_row
@@ -35,7 +36,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.09.18-v12-audit-pro"
+APP_VERSION = "2026.09.18-v16-secure-session-shared-rate-limit"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "1000"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "220"))
@@ -43,6 +44,8 @@ DAKAR_PRICE_PER_MINUTE = int(os.environ.get("DAKAR_PRICE_PER_MINUTE", "20"))
 DAKAR_MIN_FARE = int(os.environ.get("DAKAR_MIN_FARE", "1500"))
 RATE_LIMITS = defaultdict(deque)
 RATE_LIMIT_LOCK = threading.Lock()
+SESSION_COOKIE_NAME = "skg_session"
+SESSION_TTL_SECONDS = 12 * 60 * 60
 
 
 def allow_request(key, limit, window_seconds):
@@ -70,6 +73,34 @@ def allow_request(key, limit, window_seconds):
                 RATE_LIMITS.pop(item_key, None)
 
     return True
+
+
+def allow_request_shared(key, limit, window_seconds):
+    """Shared rate limit persisted in PostgreSQL; falls back to memory only if DB is unavailable."""
+    now = int(time.time())
+    bucket = now // max(1, int(window_seconds))
+    try:
+        with db() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO request_rate_limits(rate_key, bucket, request_count, updated_at)
+                VALUES(%s, %s, 1, %s)
+                ON CONFLICT(rate_key, bucket) DO UPDATE
+                SET request_count=request_rate_limits.request_count + 1,
+                    updated_at=EXCLUDED.updated_at
+                RETURNING request_count
+                """,
+                (key, bucket, now)
+            ).fetchone()
+            # Opportunistic cleanup: keep roughly two days of buckets.
+            if secrets.randbelow(100) == 0:
+                conn.execute(
+                    "DELETE FROM request_rate_limits WHERE updated_at < %s",
+                    (now - 172800,)
+                )
+        return int(row["request_count"]) <= int(limit)
+    except Exception:
+        return allow_request(key, limit, window_seconds)
 
 
 def in_dakar_thies_service_zone(lat, lng):
@@ -795,6 +826,19 @@ def init():
                 revoked BOOLEAN NOT NULL DEFAULT FALSE
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS request_rate_limits(
+                rate_key TEXT NOT NULL,
+                bucket BIGINT NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                updated_at BIGINT NOT NULL,
+                PRIMARY KEY(rate_key, bucket)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_request_rate_limits_updated
+            ON request_rate_limits(updated_at)
+        """)
 
 
 def hash_pin(pin, salt=None):
@@ -858,38 +902,42 @@ def make_token(role, name="", driver_id=""):
     return encoded + "." + signature
 
 
+def read_token_value(token):
+    if not token:
+        return None
+    try:
+        encoded, signature = str(token).split(".", 1)
+        expected = hmac.new(
+            AUTH_SECRET.encode(), encoded.encode(), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return None
+        payload = json.loads(b64decode(encoded).decode())
+        if int(payload.get("exp", 0)) < int(time.time()):
+            return None
+        return payload
+    except Exception:
+        return None
+
+
 def read_token(header):
     if not header or not header.startswith("Bearer "):
         return None
+    return read_token_value(header[7:].strip())
 
-    try:
-        token = header[7:].strip()
 
-        encoded, signature = token.split(".", 1)
+def session_cookie(token=None, clear=False):
+    cookie = SimpleCookie()
+    cookie[SESSION_COOKIE_NAME] = "" if clear else str(token or "")
+    morsel = cookie[SESSION_COOKIE_NAME]
+    morsel["path"] = "/api"
+    morsel["secure"] = True
+    morsel["httponly"] = True
+    morsel["samesite"] = "Strict"
+    morsel["max-age"] = 0 if clear else SESSION_TTL_SECONDS
+    return morsel.OutputString()
 
-        expected = hmac.new(
-            AUTH_SECRET.encode(),
-            encoded.encode(),
-            hashlib.sha256
-        ).hexdigest()
 
-        if not hmac.compare_digest(
-            signature,
-            expected
-        ):
-            return None
-
-        payload = json.loads(
-            b64decode(encoded).decode()
-        )
-
-        if int(payload.get("exp", 0)) < int(time.time()):
-            return None
-
-        return payload
-
-    except Exception:
-        return None
 def valid_coords(lat, lng):
     try:
         lat = float(lat)
@@ -1099,7 +1147,7 @@ class App(SimpleHTTPRequestHandler):
 
     def check_rate(self, action, limit, window_seconds, identity=""):
         key = f"{action}:{self.client_ip()}:{identity[:80]}"
-        if allow_request(key, limit, window_seconds):
+        if allow_request_shared(key, limit, window_seconds):
             return True
         self.sendj(
             {"error": "Trop de tentatives. Réessayez plus tard."},
@@ -1136,7 +1184,7 @@ class App(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def sendj(self, obj, status=200):
+    def sendj(self, obj, status=200, extra_headers=None):
         body = json.dumps(
             obj,
             ensure_ascii=False
@@ -1160,6 +1208,9 @@ class App(SimpleHTTPRequestHandler):
         )
 
         self.security_headers()
+
+        for header_name, header_value in (extra_headers or []):
+            self.send_header(header_name, header_value)
 
         self.end_headers()
 
@@ -1220,9 +1271,16 @@ class App(SimpleHTTPRequestHandler):
 
 
     def auth(self):
-        return read_token(
-            self.headers.get("Authorization")
-        )
+        user = read_token(self.headers.get("Authorization"))
+        if user:
+            return user
+        try:
+            cookies = SimpleCookie()
+            cookies.load(self.headers.get("Cookie", ""))
+            morsel = cookies.get(SESSION_COOKIE_NAME)
+            return read_token_value(morsel.value if morsel else "")
+        except Exception:
+            return None
 
 
     def serve_index(self):
@@ -1258,6 +1316,15 @@ class App(SimpleHTTPRequestHandler):
 
         if path == "/api/push/public-key":
             return self.sendj({"public_key": VAPID_PUBLIC_KEY, "configured": bool(VAPID_PUBLIC_KEY)})
+        if path == "/api/session":
+            user = self.auth()
+            if not user:
+                return self.sendj({"authenticated": False})
+            return self.sendj({
+                "authenticated": True,
+                "role": user.get("role", ""),
+                "name": user.get("name", "")
+            })
         if path in ("/", "/index.html"):
             return self.serve_index()
         if path == "/paiement/succes":
@@ -1811,6 +1878,12 @@ class App(SimpleHTTPRequestHandler):
 
             return self.sendj({"ok": True})
 
+        if path == "/api/logout":
+            return self.sendj(
+                {"ok": True},
+                extra_headers=[("Set-Cookie", session_cookie(clear=True))]
+            )
+
         # RECHARGE COMPTE CHAUFFEUR
         if path == "/api/driver/recharge":
 
@@ -2148,23 +2221,16 @@ class App(SimpleHTTPRequestHandler):
                 )
 
 
-            return self.sendj({
-                "token":
-                    make_token(
-                        "driver",
-                        driver["name"],
-                        driver["id"]
-                    ),
-
-                "name":
-                    driver["name"],
-
-                "vehicle":
-                    driver["vehicle"],
-
-                "village":
-                    driver["village"]
-            })
+            token = make_token("driver", driver["name"], driver["id"])
+            return self.sendj(
+                {
+                    "authenticated": True,
+                    "name": driver["name"],
+                    "vehicle": driver["vehicle"],
+                    "village": driver["village"]
+                },
+                extra_headers=[("Set-Cookie", session_cookie(token))]
+            )
 
 
         # SUPPRESSION DU COMPTE CHAUFFEUR ET ANONYMISATION
@@ -2258,13 +2324,11 @@ class App(SimpleHTTPRequestHandler):
                     401
                 )
 
-            return self.sendj({
-                "token":
-                    make_token(
-                        "admin",
-                        "Admin"
-                    )
-            })
+            token = make_token("admin", "Admin")
+            return self.sendj(
+                {"authenticated": True, "name": "Admin"},
+                extra_headers=[("Set-Cookie", session_cookie(token))]
+            )
 
 
         # ADMIN ACCEPTE CHAUFFEUR

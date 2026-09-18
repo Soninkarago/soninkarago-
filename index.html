@@ -1214,9 +1214,9 @@ delivery_moudery_local:1000
 };
 
 let lastRide=localStorage.getItem('lastRide')||null;
-let driverToken=sessionStorage.getItem('driverToken')||'';
-let adminToken=sessionStorage.getItem('adminToken')||'';
-let currentDriver=sessionStorage.getItem('driverName')||'';
+let driverToken='';
+let adminToken='';
+let currentDriver='';
 let trackingToken =
 localStorage.getItem('trackingToken') || '';
 let lastKnownRideStatus='';
@@ -1330,6 +1330,7 @@ updateFare();
 
 async function request(path,options={}){
 
+    options.credentials='same-origin';
     const r = await fetch('/api' + path, options);
 
     let data = {};
@@ -1362,7 +1363,7 @@ const headers={
 'Content-Type':'application/json'
 };
 
-if(token){
+if(token && token!=='session'){
 headers.Authorization='Bearer '+token;
 }
 
@@ -1381,7 +1382,7 @@ async function get(path,token=''){
 
 const headers={};
 
-if(token){
+if(token && token!=='session'){
 headers.Authorization='Bearer '+token;
 }
 
@@ -1714,18 +1715,8 @@ pin:$('#driverPin').value.trim()
 }
 );
 
-driverToken=r.token;
-currentDriver=r.name;
-
-sessionStorage.setItem(
-'driverToken',
-driverToken
-);
-
-sessionStorage.setItem(
-'driverName',
-currentDriver
-);
+driverToken='session';
+currentDriver=r.name||'';
 
 showDriverArea();
 refreshDriver();
@@ -1753,9 +1744,7 @@ function driverLogout(){
 
 driverToken='';
 currentDriver='';
-
-sessionStorage.removeItem('driverToken');
-sessionStorage.removeItem('driverName');
+post('/logout',{}).catch(()=>{});
 
 $('#driverArea').classList.add('hidden');
 $('#driverLogin').classList.remove('hidden');
@@ -2187,6 +2176,23 @@ alert(e.message);
 }
 
 
+async function restoreSession(){
+  try{
+    const s=await get('/session');
+    if(!s.authenticated){ return; }
+    if(s.role==='driver'){
+      driverToken='session';
+      currentDriver=s.name||'';
+      showDriverArea();
+      refreshDriver();
+    }else if(s.role==='admin'){
+      adminToken='session';
+      showAdminArea();
+      refreshAdmin();
+    }
+  }catch(e){}
+}
+
 /* ADMIN */
 
 $('#adminLoginBtn').onclick=async()=>{
@@ -2202,12 +2208,7 @@ password:$('#adminPassword').value
 }
 );
 
-adminToken=r.token;
-
-sessionStorage.setItem(
-'adminToken',
-adminToken
-);
+adminToken='session';
 
 showAdminArea();
 refreshAdmin();
@@ -2231,8 +2232,7 @@ $('#adminArea').classList.remove('hidden');
 function adminLogout(){
 
 adminToken='';
-
-sessionStorage.removeItem('adminToken');
+post('/logout',{}).catch(()=>{});
 
 $('#adminArea').classList.add('hidden');
 $('#adminLogin').classList.remove('hidden');
@@ -2957,13 +2957,7 @@ refreshAdmin();
 );
 
 
-if(driverToken){
-showDriverArea();
-}
-
-if(adminToken){
-showAdminArea();
-}
+restoreSession();
 
 updateFare();
 refreshClient();
