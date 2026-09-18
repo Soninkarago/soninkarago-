@@ -35,7 +35,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.09.17-v11-dakar-thies-aibd"
+APP_VERSION = "2026.09.18-v12-audit-pro"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "1000"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "220"))
@@ -1065,6 +1065,7 @@ class App(SimpleHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         self.send_header("Cross-Origin-Opener-Policy", "same-origin")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header("X-Permitted-Cross-Domain-Policies", "none")
         self.send_header(
             "Permissions-Policy",
@@ -1086,11 +1087,15 @@ class App(SimpleHTTPRequestHandler):
         )
 
     def client_ip(self):
-        return (
+        # Render transmet l'adresse d'origine via X-Forwarded-For.
+        # On borne et nettoie la valeur avant de l'utiliser comme clé anti-abus.
+        candidate = (
             self.headers.get("CF-Connecting-IP")
             or self.headers.get("X-Forwarded-For", "").split(",")[0].strip()
             or self.client_address[0]
         )
+        candidate = str(candidate or "unknown").strip()[:64]
+        return candidate if candidate else "unknown"
 
     def check_rate(self, action, limit, window_seconds, identity=""):
         key = f"{action}:{self.client_ip()}:{identity[:80]}"
@@ -1290,9 +1295,7 @@ class App(SimpleHTTPRequestHandler):
                 }, 503)
             return self.sendj({
                 "ok": True,
-                "database": "postgresql",
-                "paytech": bool(PAYTECH_API_KEY and PAYTECH_API_SECRET),
-                "payment_environment": PAYTECH_ENV,
+                "service": "SoninkaraGo",
                 "version": APP_VERSION
             })
 
@@ -1684,10 +1687,12 @@ class App(SimpleHTTPRequestHandler):
             if not PAYTECH_API_KEY or not PAYTECH_API_SECRET:
                 return self.sendj({"error": "PayTech non configuré"}, 503)
 
-            ref_command = str(data.get("ref_command", "")).strip()
+            ref_command = str(data.get("ref_command", "")).strip()[:120]
             item_price = str(data.get("item_price", "")).strip()
+            final_item_price = str(data.get("final_item_price", "")).strip()
+            effective_price = final_item_price or item_price
             received_hmac = str(data.get("hmac_compute", "")).strip().lower()
-            message = f"{item_price}|{ref_command}|{PAYTECH_API_KEY}"
+            message = f"{effective_price}|{ref_command}|{PAYTECH_API_KEY}"
             expected_hmac = hmac.new(
                 PAYTECH_API_SECRET.encode(),
                 message.encode(),
@@ -1696,6 +1701,13 @@ class App(SimpleHTTPRequestHandler):
 
             if not received_hmac or not hmac.compare_digest(received_hmac, expected_hmac):
                 return self.sendj({"error": "Signature IPN invalide"}, 403)
+
+            callback_currency = str(data.get("currency", "XOF")).upper().strip()
+            callback_env = str(data.get("env", PAYTECH_ENV)).lower().strip()
+            if callback_currency and callback_currency != "XOF":
+                return self.sendj({"error": "Devise IPN invalide"}, 409)
+            if callback_env and callback_env != PAYTECH_ENV:
+                return self.sendj({"error": "Environnement IPN invalide"}, 409)
 
             event = str(data.get("type_event", "")).strip()
 
@@ -1715,7 +1727,7 @@ class App(SimpleHTTPRequestHandler):
                         return self.sendj({"error": "Recharge introuvable"}, 404)
 
                     try:
-                        paid_amount = int(float(item_price))
+                        paid_amount = int(float(effective_price))
                     except (TypeError, ValueError):
                         return self.sendj({"error": "Montant invalide"}, 400)
 
@@ -1763,7 +1775,7 @@ class App(SimpleHTTPRequestHandler):
                     return self.sendj({"error": "Réservation introuvable"}, 404)
 
                 try:
-                    paid_amount = int(float(item_price))
+                    paid_amount = int(float(effective_price))
                 except (TypeError, ValueError):
                     return self.sendj({"error": "Montant invalide"}, 400)
 
@@ -1784,6 +1796,7 @@ class App(SimpleHTTPRequestHandler):
                             ref_command
                         )
                     )
+                    assign_next_driver(conn, ref_command)
                 elif event == "sale_canceled":
                     conn.execute(
                         """
@@ -2482,6 +2495,7 @@ class App(SimpleHTTPRequestHandler):
                 )
             client_lat, client_lng = client_coords or (None, None)
 
+            driver_available = True
             if dakar_ride:
                 with db() as conn:
                     nearby = conn.execute("""
@@ -2491,10 +2505,16 @@ class App(SimpleHTTPRequestHandler):
                           AND last_location_at >= %s AND balance >= %s
                           AND NOT EXISTS (SELECT 1 FROM rides r WHERE r.driver_id=drivers.id AND r.status='accepted')
                     """, (int(time.time()) - 300, fee)).fetchall()
-                if not any(in_dakar_zone(d["latitude"], d["longitude"])
-                           and distance_km(client_lat, client_lng, d["latitude"], d["longitude"]) <= 20
-                           for d in nearby):
-                    return self.sendj({"error": "Aucun chauffeur voiture disponible près du départ. Aucun paiement demandé."}, 409)
+                driver_available = any(
+                    in_dakar_zone(d["latitude"], d["longitude"])
+                    and distance_km(client_lat, client_lng, d["latitude"], d["longitude"]) <= 20
+                    for d in nearby
+                )
+            # Fonctionnement production : une commande reste active même si aucun chauffeur
+            # n'est disponible au moment précis de la demande. Elle est conservée en recherche
+            # et pourra être proposée dès qu'un chauffeur éligible se connecte.
+            initial_status = "awaiting_payment" if mobile_payment else "searching"
+            initial_payment_status = "unpaid"
 
             assigned_driver = None
             with db() as conn:
@@ -2546,7 +2566,7 @@ class App(SimpleHTTPRequestHandler):
                         payment,
                         fare,
                         fee,
-                        "awaiting_payment" if mobile_payment else "searching",
+                        initial_status,
                         "",
                         client_lat,
                         client_lng,
@@ -2559,7 +2579,7 @@ class App(SimpleHTTPRequestHandler):
                         passenger_count,
                         luggage,
                         booking_note,
-                        "unpaid",
+                        initial_payment_status,
                         deposit_amount,
                         balance_due,
                         False
@@ -2575,8 +2595,8 @@ class App(SimpleHTTPRequestHandler):
                     "vehicle": route["service"],
                     "fare": fare,
                     "fee": fee,
-                    "status": "awaiting_payment" if mobile_payment else "searching",
-                    "payment_status": "unpaid",
+                    "status": initial_status,
+                    "payment_status": initial_payment_status,
                     "deposit_amount": deposit_amount,
                     "balance_due": balance_due,
                     "tracking_token": tracking_token
@@ -2598,6 +2618,11 @@ class App(SimpleHTTPRequestHandler):
                         client_name or "Client"
                     )
                 except (RuntimeError, ValueError) as exc:
+                    with db() as conn:
+                        conn.execute(
+                            "UPDATE rides SET status='payment_failed', payment_status='failed' WHERE id=%s",
+                            (ride_id,)
+                        )
                     return self.sendj({
                         "error": str(exc),
                         "ride_id": ride_id
@@ -3298,6 +3323,9 @@ if __name__ == "__main__":
         raise RuntimeError(
             "AUTH_SECRET doit être configuré dans Render"
         )
+
+    if PAYTECH_ENV not in ("test", "prod"):
+        raise RuntimeError("PAYTECH_ENV doit être 'test' ou 'prod'")
 
     init()
 

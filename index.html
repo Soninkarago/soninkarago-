@@ -165,22 +165,32 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 .app-actions button .action-sub{display:block;margin-top:3px;font-size:11px;font-weight:520;line-height:1.25;opacity:.68}
 .product-sheet{position:fixed;inset:0;z-index:100;display:none;align-items:flex-end;justify-content:center;background:rgba(7,10,8,.48);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);padding:18px}
 .product-sheet.open{display:flex}
-.product-sheet-panel{width:min(100%,560px);max-height:min(82vh,720px);overflow:auto;background:#fff;border:1px solid #e5e6e2;border-radius:28px;padding:20px;box-shadow:0 24px 80px rgba(0,0,0,.26);animation:sheetIn .22s ease-out}
+.product-sheet-panel{width:min(100%,540px);max-height:min(78vh,680px);overflow:auto;background:#fff;border:1px solid #e5e6e2;border-radius:28px;padding:20px;box-shadow:0 24px 80px rgba(0,0,0,.26);animation:sheetIn .22s ease-out}
 @keyframes sheetIn{from{transform:translateY(18px);opacity:.4}to{transform:translateY(0);opacity:1}}
 .sheet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
 .sheet-kicker{display:inline-flex;padding:7px 10px;border-radius:999px;background:#eef4f0;color:#0b6d4d;font-size:11px;font-weight:760}
-.sheet-title{margin:12px 0 6px;font-size:28px;line-height:1.02;letter-spacing:-.045em;font-weight:800}
+.sheet-title{margin:10px 0 6px;font-size:24px;line-height:1.02;letter-spacing:-.045em;font-weight:800}
 .sheet-copy{margin:0;color:#656a65;font-size:14px;line-height:1.5}
 .sheet-close{width:42px;min-height:42px;margin:0;padding:0;border-radius:50%;background:#f1f2ef;color:#161916;font-size:22px;font-weight:500;flex:0 0 auto}
 .sheet-close::after{display:none}
 .sheet-steps{display:grid;gap:10px;margin-top:18px}
 .sheet-step{display:flex;gap:12px;align-items:flex-start;padding:14px;border:1px solid #e6e7e3;border-radius:16px;background:#fafaf8}
-.sheet-step-number{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:#151815;color:#fff;font-size:12px;font-weight:760;flex:0 0 auto}
+.sheet-step-number{display:inline-flex;align-items:center;justify-content:center;min-width:66px;height:26px;padding:0 9px;border-radius:999px;background:#eef4f0;color:#0b6d4d;font-size:10px;font-weight:780;letter-spacing:.01em;flex:0 0 auto}
 .sheet-step strong{display:block;font-size:14px;color:#1a1d1a}.sheet-step span{display:block;margin-top:3px;font-size:12px;color:#737773;line-height:1.4}
 .sheet-cta{margin-top:16px;background:#0b7a55;box-shadow:0 10px 24px rgba(11,122,85,.16)}
 .sheet-secondary{margin-top:8px;background:#f0f1ed;color:#202420}
 .install-check{display:flex;align-items:center;gap:10px;margin-top:16px;padding:12px 14px;border-radius:14px;background:#f7f8f5;color:#4a4f4a;font-size:12px}
 .install-check-dot{width:9px;height:9px;border-radius:50%;background:#b6bbb6}.install-check.active .install-check-dot{background:#0b7a55;box-shadow:0 0 0 4px rgba(11,122,85,.1)}
+
+
+@media(max-width:600px){
+  .product-sheet{padding:10px}
+  .product-sheet-panel{border-radius:22px;padding:16px;max-height:80vh}
+  .sheet-title{font-size:22px}
+  .sheet-copy{font-size:13px}
+  .sheet-step{padding:11px;gap:9px}
+  .sheet-step strong{font-size:13px}
+}
 
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 </style>
@@ -195,11 +205,11 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
     <span class="hero-kicker">Transport premium · Réservation simple · Suivi en direct</span>
   </div>
   <h1>SoninkaraGo</h1>
-  <p>La mobilité pensée pour vos trajets au Sénégal. Une expérience plus claire, plus rapide et plus élégante, centrée sur votre marque.</p>
+  <p>Réservez votre trajet, connaissez le prix avant de partir et suivez votre course simplement, de Dakar jusqu’à Thiès.</p>
   <div class="hero-points">
     <span>Prix affichés à l’avance</span>
     <span>Chauffeur localisé</span>
-    <span>Disponible 24/7</span>
+    <span>Dakar · AIBD · Thiès</span>
   </div>
 </div>
 
@@ -595,7 +605,7 @@ Activer ma position
 
   <div class="sponsors-zone">
     <h3>Partenaires</h3>
-    <p class="sponsors-note">Des partenaires mieux présentés, avec des formats plus grands et plus lisibles.</p>
+    <p class="sponsors-note">Ils accompagnent le développement de SoninkaraGo.</p>
 
     <div class="sponsors-grid">
 
@@ -939,11 +949,11 @@ $('#installApp').onclick=async()=>{
     openSheet({
       kicker:'Installation iPhone',
       title:'Ajoutez SoninkaraGo à votre écran d’accueil',
-      copy:'Apple installe les applications web depuis le menu Partager de Safari. Cela prend quelques secondes.',
+      copy:'Sur iPhone, ajoutez SoninkaraGo depuis le menu Partager de Safari.',
       body:`<div class="sheet-steps">
-        <div class="sheet-step"><span class="sheet-step-number">1</span><div><strong>Ouvrez le menu Partager</strong><span>Dans Safari, touchez l’icône Partager en bas de l’écran.</span></div></div>
-        <div class="sheet-step"><span class="sheet-step-number">2</span><div><strong>Choisissez « Sur l’écran d’accueil »</strong><span>Faites défiler les actions si l’option n’apparaît pas tout de suite.</span></div></div>
-        <div class="sheet-step"><span class="sheet-step-number">3</span><div><strong>Appuyez sur « Ajouter »</strong><span>SoninkaraGo apparaîtra comme une application sur votre iPhone.</span></div></div>
+        <div class="sheet-step"><span class="sheet-step-number">Étape 1</span><div><strong>Ouvrez Partager</strong><span>Dans Safari, touchez l’icône Partager.</span></div></div>
+        <div class="sheet-step"><span class="sheet-step-number">Étape 2</span><div><strong>Sur l’écran d’accueil</strong><span>Faites défiler si l’option n’apparaît pas.</span></div></div>
+        <div class="sheet-step"><span class="sheet-step-number">Étape 3</span><div><strong>Appuyez sur « Ajouter »</strong><span>SoninkaraGo apparaîtra sur votre écran d’accueil.</span></div></div>
       </div><div class="install-check"><span class="install-check-dot"></span><span>Une fois installée, rouvrez SoninkaraGo depuis l’icône de l’écran d’accueil pour activer les notifications.</span></div>`
     });
     return;
@@ -1138,6 +1148,7 @@ const statusLabel=status=>({
   rejected:'Refusé',
   paid:'Payé',
   payment_failed:'Paiement échoué',
+  payment_canceled:'Paiement annulé',
   expired:'Expirée'
 }[String(status||'').toLowerCase()] || String(status||'').replaceAll('_',' '));
 
@@ -1560,14 +1571,15 @@ if(r.payment_url){
   return;
 }
 
+
 if(trackingToken && !dakar){
     $('#clientGpsBtn').classList.remove('hidden');
 }
 $('#orderSuccess').textContent = minicar
-  ? 'Réservation enregistrée. Un chauffeur doit maintenant confirmer votre minicar.'
-  : (r.dispatch_status === 'offered'
-      ? 'Commande envoyée au chauffeur disponible le plus proche.'
-      : 'Commande enregistrée. Recherche d’un chauffeur disponible à proximité…');
+    ? 'Réservation enregistrée. Un chauffeur doit maintenant confirmer votre minicar.'
+    : (r.dispatch_status === 'offered'
+        ? 'Commande envoyée au chauffeur disponible le plus proche.'
+        : 'Commande enregistrée. Recherche d’un chauffeur disponible à proximité…');
 
 await refreshClient();
 
