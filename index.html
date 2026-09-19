@@ -83,7 +83,7 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 .sub,small{color:var(--muted)}.hidden{display:none!important}.error{margin-top:10px;color:#a52934}.success{margin-top:10px;color:var(--brand)}.gpsInfo{margin-top:9px;color:var(--muted);font-size:13px}.gpsActive{color:var(--brand);font-weight:700}
 #fare{margin:24px 0 4px;color:#161916;font-size:34px;line-height:1;font-weight:780;letter-spacing:-.05em}
 #clientMap,#driverMap{height:320px;margin-top:14px;overflow:hidden;border:1px solid var(--line);border-radius:16px}
-#pickupMap{height:220px;margin-top:12px;overflow:hidden;border:1px solid var(--line);border-radius:16px;background:#eef1ed}.location-card{margin:10px 0 4px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:#f7f8f5}.location-card strong{display:block;margin-bottom:4px}.location-live{color:var(--brand);font-weight:700}.location-muted{color:var(--muted);font-size:13px}
+#pickupMap{height:220px;margin-top:12px;overflow:hidden;border:1px solid var(--line);border-radius:16px;background:#eef1ed}.location-card{margin:10px 0 4px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:#f7f8f5}.legal-consent{margin:14px 0;padding:14px;border:1px solid var(--line);border-radius:14px;background:#fafbf9}.checkline{display:flex;gap:10px;align-items:flex-start;margin:8px 0;font-size:13px;line-height:1.45}.checkline input{margin-top:3px;min-width:18px;min-height:18px}.checkline a{color:var(--brand);font-weight:700;text-decoration:none}.location-card strong{display:block;margin-bottom:4px}.location-live{color:var(--brand);font-weight:700}.location-muted{color:var(--muted);font-size:13px}
 #dakarBooking,#minicarBooking>div{margin-top:14px!important;padding:18px!important;border:1px solid var(--line)!important;border-radius:16px!important;background:#f7f7f4!important;color:var(--ink)!important}
 #dakarBooking h3,#minicarBooking h3{margin-top:0}
 #dakarBooking .sub,#minicarBooking .sub{color:var(--muted)!important}
@@ -579,6 +579,10 @@ Minicar 14 places — Ziguinchor → Dakar — 150 000 F
 
 <h3 id="fare">2 000 F</h3>
 
+<div class="legal-consent">
+<label class="checkline"><input type="checkbox" id="acceptTerms"><span>J’accepte les <a href="/conditions" target="_blank" rel="noopener">Conditions générales d’utilisation</a> et la <a href="/confidentialite" target="_blank" rel="noopener">Politique de confidentialité</a>.</span></label>
+<label class="checkline"><input type="checkbox" id="acceptLocation"><span>J’autorise SoninkaraGo à utiliser ma position pour déterminer mon départ, rechercher le chauffeur le plus proche et assurer le suivi de la course.</span></label>
+</div>
 <button id="order">Confirmer la réservation</button>
 
 <div id="orderError" class="error"></div>
@@ -799,11 +803,43 @@ S'inscrire comme chauffeur
 <option>Voiture taxi</option>
 </select>
 
+<h3>Dossier réglementaire chauffeur</h3>
+<p class="sub">Aucun chauffeur ne peut être activé avant vérification manuelle de ces références et de leur validité.</p>
+
+<label>Numéro de permis de conduire</label>
+<input id="registerLicenceNumber" autocomplete="off" required>
+
+<label>Date d’expiration du permis</label>
+<input id="registerLicenceExpiry" type="date" required>
+
+<label>Numéro de police d’assurance</label>
+<input id="registerInsuranceNumber" autocomplete="off" required>
+
+<label>Date d’expiration de l’assurance</label>
+<input id="registerInsuranceExpiry" type="date" required>
+
+<label>Immatriculation du véhicule</label>
+<input id="registerVehiclePlate" autocomplete="off" required>
+
+<label>Numéro de carte grise</label>
+<input id="registerRegistrationCard" autocomplete="off" required>
+
+<label>Date d’expiration de la visite technique</label>
+<input id="registerInspectionExpiry" type="date" required>
+
+<label>Référence de l’autorisation / licence de transport</label>
+<input id="registerTransportAuthorisation" autocomplete="off" placeholder="Référence administrative" required>
+
 <label>Choisissez un code PIN</label>
 <input id="registerPin" type="password" inputmode="numeric" maxlength="6">
 
 <label>Confirmez le code PIN</label>
 <input id="registerPin2" type="password" inputmode="numeric" maxlength="6">
+
+<div class="legal-consent">
+  <label class="checkline"><input type="checkbox" id="driverLegalDocs"><span>Je déclare disposer d’un permis de conduire valide adapté au véhicule, d’une assurance valide, des documents du véhicule et de toute autorisation administrative exigée pour le transport de personnes.</span></label>
+  <label class="checkline"><input type="checkbox" id="driverTerms"><span>J’accepte les <a href="/conditions" target="_blank" rel="noopener">Conditions générales</a> et la <a href="/confidentialite" target="_blank" rel="noopener">Politique de confidentialité</a>.</span></label>
+</div>
 
 <button id="registerDriverBtn">
 Envoyer mon inscription
@@ -925,6 +961,7 @@ Déconnexion
   <a href="/conditions">Conditions d’utilisation</a>
   <a href="/mentions-legales">Mentions légales</a>
   <a href="/suppression-compte">Suppression des données</a>
+  <span class="sub">Conformité Sénégal : données personnelles, consentement GPS et droits utilisateurs.</span>
   <p>© 2026 SoninkaraGo. Transport et réservation de trajets.</p>
 </footer>
 
@@ -1580,7 +1617,22 @@ function updateFare(){
   if(!dakar){
     clearDakarQuote();
   }else{
-    setTimeout(()=>locateUrbanPickup(false),120);
+    const gpsConsent = document.querySelector('#acceptLocation');
+    if(localStorage.getItem('skg_location_consent_v1') === '1'){
+      if(gpsConsent) gpsConsent.checked = true;
+      setTimeout(()=>locateUrbanPickup(false),120);
+    }
+    if(gpsConsent && !gpsConsent.dataset.bound){
+      gpsConsent.dataset.bound='1';
+      gpsConsent.addEventListener('change',()=>{
+        if(gpsConsent.checked){
+          localStorage.setItem('skg_location_consent_v1','1');
+          locateUrbanPickup(true);
+        }else{
+          localStorage.removeItem('skg_location_consent_v1');
+        }
+      });
+    }
   }
 
   $('#minicarBooking').classList.toggle(
@@ -1704,6 +1756,16 @@ function getDispatchPosition(){
 
   return new Promise((resolve,reject)=>{
 
+    const consent = document.querySelector('#acceptLocation');
+    const savedConsent = localStorage.getItem('skg_location_consent_v1') === '1';
+    if(consent && !consent.checked && !savedConsent){
+      reject(new Error('Autorisez l’utilisation de votre position pour utiliser le GPS.'));
+      return;
+    }
+    if(consent && consent.checked){
+      localStorage.setItem('skg_location_consent_v1','1');
+    }
+
     if(!navigator.geolocation){
       reject(new Error(
         'La localisation GPS est nécessaire pour trouver le chauffeur le plus proche.'
@@ -1735,6 +1797,10 @@ $('#orderSuccess').textContent='';
 
 try{
 
+const termsBox = document.querySelector('#acceptTerms');
+if(termsBox && !termsBox.checked){
+  throw new Error('Vous devez accepter les Conditions générales et la Politique de confidentialité avant de commander.');
+}
 const minicar = isMinicarRoute();
 const dakar = isDakarRoute();
 if(dakar && !dakarQuoteToken){
@@ -1865,7 +1931,12 @@ const r=await post(
     dispatchCoords ? dispatchCoords.lat : null,
 
   client_lng:
-    dispatchCoords ? dispatchCoords.lng : null
+    dispatchCoords ? dispatchCoords.lng : null,
+
+  terms_accepted: true,
+  privacy_accepted: true,
+  location_consent: document.querySelector('#acceptLocation')?.checked || localStorage.getItem('skg_location_consent_v1') === '1',
+  compliance_version: 'SN-2026-09-v2'
 }
 );
 
@@ -2150,6 +2221,14 @@ $('#driverLogin').classList.remove('hidden');
 $('#registerDriverBtn').onclick=async()=>{
 
 $('#registerError').textContent='';
+if(!$('#driverLegalDocs').checked){
+  $('#registerError').textContent='Confirmez que vous disposez des documents et autorisations obligatoires.';
+  return;
+}
+if(!$('#driverTerms').checked){
+  $('#registerError').textContent='Acceptez les Conditions générales et la Politique de confidentialité.';
+  return;
+}
 $('#registerSuccess').textContent='';
 
 const pin=$('#registerPin').value.trim();
@@ -2172,7 +2251,19 @@ name:$('#registerName').value.trim(),
 ...phoneFields('registerPhone','registerPhoneCountry'),
 village:$('#registerVillage').value,
 vehicle:$('#registerVehicle').value,
-pin
+pin,
+legal_documents_declared:true,
+terms_accepted:true,
+privacy_accepted:true,
+driving_licence_number:$('#registerLicenceNumber').value.trim(),
+driving_licence_expiry:$('#registerLicenceExpiry').value,
+insurance_policy_number:$('#registerInsuranceNumber').value.trim(),
+insurance_expiry:$('#registerInsuranceExpiry').value,
+vehicle_plate:$('#registerVehiclePlate').value.trim(),
+registration_card_number:$('#registerRegistrationCard').value.trim(),
+technical_inspection_expiry:$('#registerInspectionExpiry').value,
+transport_authorisation_reference:$('#registerTransportAuthorisation').value.trim(),
+compliance_version:'SN-2026-09-v2'
 }
 );
 
@@ -2782,7 +2873,13 @@ return `
 
 <div class="sub">
 ${esc(d.phone)}<br>
-${esc(d.village)} • ${esc(d.vehicle)}
+${esc(d.village)} • ${esc(d.vehicle)}<br>
+Permis : ${esc(d.driving_licence_number||'—')} · expire ${esc(d.driving_licence_expiry||'—')}<br>
+Assurance : ${esc(d.insurance_policy_number||'—')} · expire ${esc(d.insurance_expiry||'—')}<br>
+Véhicule : ${esc(d.vehicle_plate||'—')} · carte grise ${esc(d.registration_card_number||'—')}<br>
+Visite technique : ${esc(d.technical_inspection_expiry||'—')}<br>
+Autorisation transport : ${esc(d.transport_authorisation_reference||'—')}<br>
+Dossier réglementaire : ${d.compliance_verified ? '<b>vérifié</b>' : 'à vérifier'}
 </div>
 
 <div class="${statusClass}">
@@ -2797,7 +2894,8 @@ ${
 d.status==='pending'
 ?
 `
-<button class="approve"
+${!d.compliance_verified ? `<button class="secondary" onclick="verifyDriverDocs('${esc(d.id)}')">Documents vérifiés</button>` : ''}
+<button class="approve" ${!d.compliance_verified ? 'disabled title="Vérifiez les documents d’abord"' : ''}
 onclick="approveDriver('${esc(d.id)}')">
 Accepter
 </button>
@@ -2865,6 +2963,23 @@ ${esc(statusLabel(r.status))}
 
 adminLogout();
 
+}
+}
+
+
+async function verifyDriverDocs(id){
+
+if(!confirm('Confirmez-vous avoir contrôlé les pièces originales ou justificatifs du chauffeur et leur validité ?')) return;
+
+try{
+await post(
+'/admin/drivers/'+encodeURIComponent(id)+'/verify-docs',
+{},
+adminToken
+);
+refreshAdmin();
+}catch(e){
+alert(e.message);
 }
 }
 

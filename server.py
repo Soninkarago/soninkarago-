@@ -4,6 +4,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 import json
 import os
+import re
 import time
 import hmac
 import hashlib
@@ -38,10 +39,10 @@ PUBLIC_BASE_URL = os.environ.get(
 
 APP_VERSION = "2026.09.18-v20-live-eta"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
-DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "1000"))
-DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "220"))
+DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
+DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
 DAKAR_PRICE_PER_MINUTE = int(os.environ.get("DAKAR_PRICE_PER_MINUTE", "20"))
-DAKAR_MIN_FARE = int(os.environ.get("DAKAR_MIN_FARE", "1500"))
+DAKAR_MIN_FARE = int(os.environ.get("DAKAR_MIN_FARE", "700"))
 RATE_LIMITS = defaultdict(deque)
 RATE_LIMIT_LOCK = threading.Lock()
 SESSION_COOKIE_NAME = "skg_session"
@@ -1157,6 +1158,80 @@ def init():
     ALTER TABLE drivers
     ADD COLUMN IF NOT EXISTS balance INTEGER NOT NULL DEFAULT 0
 """)
+        # Conformité Sénégal — consentements et dossier chauffeur
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS terms_accepted_at BIGINT
+        """)
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS privacy_accepted_at BIGINT
+        """)
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS location_consent_at BIGINT
+        """)
+        conn.execute("""
+            ALTER TABLE rides
+            ADD COLUMN IF NOT EXISTS compliance_version TEXT
+        """)
+
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS legal_documents_declared BOOLEAN NOT NULL DEFAULT FALSE
+        """)
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS terms_accepted_at BIGINT
+        """)
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS privacy_accepted_at BIGINT
+        """)
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS compliance_version TEXT
+        """)
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS driving_licence_number TEXT
+        """)
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS driving_licence_expiry TEXT
+        """)
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS insurance_policy_number TEXT
+        """)
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS insurance_expiry TEXT
+        """)
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS vehicle_plate TEXT
+        """)
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS registration_card_number TEXT
+        """)
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS technical_inspection_expiry TEXT
+        """)
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS transport_authorisation_reference TEXT
+        """)
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS compliance_verified BOOLEAN NOT NULL DEFAULT FALSE
+        """)
+        conn.execute("""
+            ALTER TABLE drivers
+            ADD COLUMN IF NOT EXISTS compliance_verified_at BIGINT
+        """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS driver_recharges(
                 id TEXT PRIMARY KEY,
@@ -2055,7 +2130,17 @@ class App(SimpleHTTPRequestHandler):
                         village,
                         vehicle,
                         status,
-                        created_at
+                        created_at,
+                        driving_licence_number,
+                        driving_licence_expiry,
+                        insurance_policy_number,
+                        insurance_expiry,
+                        vehicle_plate,
+                        registration_card_number,
+                        technical_inspection_expiry,
+                        transport_authorisation_reference,
+                        compliance_verified,
+                        compliance_verified_at
                     FROM drivers
                     ORDER BY created_at DESC
                     """
@@ -2646,6 +2731,50 @@ class App(SimpleHTTPRequestHandler):
                 data.get("pin", "")
             ).strip()
 
+            legal_documents_declared = data.get("legal_documents_declared") is True
+            terms_accepted = data.get("terms_accepted") is True
+            privacy_accepted = data.get("privacy_accepted") is True
+            compliance_version = str(data.get("compliance_version", "SN-2026-09-v2"))[:50]
+
+            driving_licence_number = str(data.get("driving_licence_number", "")).strip()
+            driving_licence_expiry = str(data.get("driving_licence_expiry", "")).strip()
+            insurance_policy_number = str(data.get("insurance_policy_number", "")).strip()
+            insurance_expiry = str(data.get("insurance_expiry", "")).strip()
+            vehicle_plate = str(data.get("vehicle_plate", "")).strip().upper()
+            registration_card_number = str(data.get("registration_card_number", "")).strip()
+            technical_inspection_expiry = str(data.get("technical_inspection_expiry", "")).strip()
+            transport_authorisation_reference = str(data.get("transport_authorisation_reference", "")).strip()
+
+            if not legal_documents_declared:
+                return self.sendj({"error": "La déclaration des documents et autorisations du chauffeur est obligatoire."}, 400)
+            if not terms_accepted or not privacy_accepted:
+                return self.sendj({"error": "Acceptation des conditions et de la politique de confidentialité requise."}, 400)
+
+            required_legal = {
+                "numéro de permis": driving_licence_number,
+                "date d’expiration du permis": driving_licence_expiry,
+                "numéro de police d’assurance": insurance_policy_number,
+                "date d’expiration de l’assurance": insurance_expiry,
+                "immatriculation du véhicule": vehicle_plate,
+                "numéro de carte grise": registration_card_number,
+                "date d’expiration de la visite technique": technical_inspection_expiry,
+                "référence de l’autorisation/licence de transport": transport_authorisation_reference,
+            }
+            missing = [label for label, value in required_legal.items() if not value]
+            if missing:
+                return self.sendj({"error": "Dossier chauffeur incomplet : " + ", ".join(missing)}, 400)
+
+            today = time.strftime("%Y-%m-%d")
+            for label, value in (
+                ("permis", driving_licence_expiry),
+                ("assurance", insurance_expiry),
+                ("visite technique", technical_inspection_expiry),
+            ):
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                    return self.sendj({"error": f"Date invalide pour {label} (AAAA-MM-JJ)."}, 400)
+                if value < today:
+                    return self.sendj({"error": f"Le document {label} est expiré."}, 400)
+
 
             if len(name) < 2:
                 return self.sendj(
@@ -2733,9 +2862,25 @@ class App(SimpleHTTPRequestHandler):
                             pin_hash,
                             pin_salt,
                             status,
-                            created_at
+                            created_at,
+                            legal_documents_declared,
+                            terms_accepted_at,
+                            privacy_accepted_at,
+                            compliance_version,
+                            driving_licence_number,
+                            driving_licence_expiry,
+                            insurance_policy_number,
+                            insurance_expiry,
+                            vehicle_plate,
+                            registration_card_number,
+                            technical_inspection_expiry,
+                            transport_authorisation_reference,
+                            compliance_verified
                         )
                         VALUES(
+                            %s,%s,%s,%s,%s,
+                            %s,%s,%s,%s,
+                            %s,%s,%s,%s,
                             %s,%s,%s,%s,%s,
                             %s,%s,%s,%s
                         )
@@ -2749,7 +2894,20 @@ class App(SimpleHTTPRequestHandler):
                             pin_hash,
                             pin_salt,
                             "pending",
-                            int(time.time())
+                            int(time.time()),
+                            True,
+                            int(time.time()),
+                            int(time.time()),
+                            compliance_version,
+                            driving_licence_number[:80],
+                            driving_licence_expiry,
+                            insurance_policy_number[:100],
+                            insurance_expiry,
+                            vehicle_plate[:30],
+                            registration_card_number[:100],
+                            technical_inspection_expiry,
+                            transport_authorisation_reference[:150],
+                            False
                         )
                     )
 
@@ -2884,6 +3042,28 @@ class App(SimpleHTTPRequestHandler):
             )
 
 
+        # EXERCICE DES DROITS SUR LES DONNÉES PERSONNELLES
+        if path == "/api/privacy/request":
+            request_type = str(data.get("request_type", "")).strip().lower()
+            if request_type not in ("access", "rectification", "deletion", "opposition"):
+                return self.sendj({"error": "Type de demande invalide"}, 400)
+            name = str(data.get("name", "")).strip()[:120]
+            phone = str(data.get("phone", "")).strip()[:40]
+            email = str(data.get("email", "")).strip()[:160]
+            details = str(data.get("details", "")).strip()[:1200]
+            if not phone and not email:
+                return self.sendj({"error": "Indiquez un téléphone ou un e-mail pour être recontacté."}, 400)
+            req_id = "PRV-" + secrets.token_hex(6).upper()
+            with db() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO privacy_requests(id,request_type,name,phone,email,details,status,created_at)
+                    VALUES(%s,%s,%s,%s,%s,%s,'received',%s)
+                    """,
+                    (req_id, request_type, name, phone, email, details, int(time.time()))
+                )
+            return self.sendj({"ok": True, "request_id": req_id, "message": "Votre demande a été enregistrée."})
+
         # SUPPRESSION DU COMPTE CHAUFFEUR ET ANONYMISATION
         if path == "/api/driver/account/delete":
             user = self.auth()
@@ -2985,6 +3165,53 @@ class App(SimpleHTTPRequestHandler):
             )
 
 
+        # ADMIN VERIFIE LE DOSSIER REGLEMENTAIRE DU CHAUFFEUR
+        if (
+            path.startswith("/api/admin/drivers/")
+            and path.endswith("/verify-docs")
+        ):
+
+            user = self.auth()
+            if not user or user.get("role") != "admin":
+                return self.sendj({"error": "Non autorisé"}, 401)
+
+            driver_id = path.split("/")[4]
+            with db() as conn:
+                row = conn.execute(
+                    """
+                    SELECT
+                        driving_licence_number, driving_licence_expiry,
+                        insurance_policy_number, insurance_expiry,
+                        vehicle_plate, registration_card_number,
+                        technical_inspection_expiry,
+                        transport_authorisation_reference
+                    FROM drivers WHERE id=%s
+                    """,
+                    (driver_id,)
+                ).fetchone()
+                if not row:
+                    return self.sendj({"error": "Chauffeur introuvable"}, 404)
+
+                if not all(row.get(k) for k in (
+                    "driving_licence_number","driving_licence_expiry",
+                    "insurance_policy_number","insurance_expiry",
+                    "vehicle_plate","registration_card_number",
+                    "technical_inspection_expiry","transport_authorisation_reference"
+                )):
+                    return self.sendj({"error": "Le dossier réglementaire est incomplet."}, 400)
+
+                conn.execute(
+                    """
+                    UPDATE drivers
+                    SET compliance_verified=TRUE, compliance_verified_at=%s
+                    WHERE id=%s
+                    """,
+                    (int(time.time()), driver_id)
+                )
+
+            return self.sendj({"ok": True, "compliance_verified": True})
+
+
         # ADMIN ACCEPTE CHAUFFEUR
         if (
             path.startswith("/api/admin/drivers/")
@@ -3005,11 +3232,22 @@ class App(SimpleHTTPRequestHandler):
             driver_id = path.split("/")[4]
 
             with db() as conn:
+                row = conn.execute(
+                    "SELECT compliance_verified FROM drivers WHERE id=%s",
+                    (driver_id,)
+                ).fetchone()
+                if not row:
+                    return self.sendj({"error": "Chauffeur introuvable"}, 404)
+                if not bool(row.get("compliance_verified")):
+                    return self.sendj(
+                        {"error": "Vérifiez d’abord le dossier réglementaire du chauffeur avant de l’accepter."},
+                        400
+                    )
                 cur = conn.execute(
                     """
                     UPDATE drivers
                     SET status='approved'
-                    WHERE id=%s
+                    WHERE id=%s AND compliance_verified=TRUE
                     """,
                     (driver_id,)
                 )
@@ -3268,14 +3506,18 @@ class App(SimpleHTTPRequestHandler):
                         payment_status,
                         deposit_amount,
                         balance_due,
-                        commission_charged
+                        commission_charged,
+                        terms_accepted_at,
+                        privacy_accepted_at,
+                        location_consent_at,
+                        compliance_version
                     )
                     VALUES(
                         %s,%s,%s,%s,%s,%s,
                         %s,%s,%s,%s,%s,%s,
                         %s,%s,%s,%s,%s,%s,
                         %s,%s,%s,%s,%s,%s,
-                        %s,%s
+                        %s,%s,%s,%s,%s,%s
                     )
                     """,
                     (
@@ -3304,7 +3546,11 @@ class App(SimpleHTTPRequestHandler):
                         initial_payment_status,
                         deposit_amount,
                         balance_due,
-                        False
+                        False,
+                        int(time.time()),
+                        int(time.time()),
+                        int(time.time()) if data.get("location_consent") is True else None,
+                        str(data.get("compliance_version", "SN-2026-09-v2"))[:50]
                     )
                 )
                 if not mobile_payment:
