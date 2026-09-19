@@ -313,6 +313,47 @@ def geocode_senegal(query, bias_zone=None):
     }
 
 
+
+def reverse_geocode_senegal(lat, lng):
+    try:
+        lat = float(lat)
+        lng = float(lng)
+    except (TypeError, ValueError):
+        raise ValueError("Coordonnées GPS invalides.")
+    if not (12.0 <= lat <= 17.5 and -18.5 <= lng <= -11.0):
+        raise ValueError("Cette position ne semble pas être au Sénégal.")
+    key = google_maps_api_key()
+    if not key:
+        raise RuntimeError("Service de localisation temporairement indisponible.")
+    params = {
+        "latlng": f"{lat:.7f},{lng:.7f}",
+        "language": "fr",
+        "region": "sn",
+        "key": key,
+    }
+    url = "https://maps.googleapis.com/maps/api/geocode/json?" + urlencode(params)
+    data = http_json(url, timeout=8)
+    if data.get("status") != "OK" or not data.get("results"):
+        raise ValueError("Impossible d’identifier précisément votre position.")
+    result = data["results"][0]
+    address = str(result.get("formatted_address") or "").strip()[:200]
+    city = ""
+    for component in result.get("address_components") or []:
+        types = set(component.get("types") or [])
+        if types.intersection({"locality", "postal_town", "administrative_area_level_2", "administrative_area_level_1"}):
+            city = str(component.get("long_name") or "").strip()
+            if city:
+                break
+    zone = detect_urban_zone(lat, lng)
+    return {
+        "address": address,
+        "city": city,
+        "lat": lat,
+        "lng": lng,
+        "zone": zone or "",
+        "zone_label": (URBAN_CAR_ZONES.get(zone, {}).get("label") if zone else "") or "",
+    }
+
 def urban_quote(zone_code, pickup, destination):
     if not MAPS_API_KEY or not AUTH_SECRET:
         raise RuntimeError("Calcul du trajet momentanément indisponible.")
@@ -1703,6 +1744,19 @@ class App(SimpleHTTPRequestHandler):
             return self.serve_static(static_pages[path], cache_seconds)
         if path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico")):
             return self.serve_static(path.lstrip("/"), 86400)
+        if path == "/api/location/reverse":
+            try:
+                params = parse_qs(parsed.query)
+                lat = (params.get("lat") or [""])[0]
+                lng = (params.get("lng") or [""])[0]
+                self.json_response(200, reverse_geocode_senegal(lat, lng))
+            except ValueError as exc:
+                self.json_response(400, {"error": str(exc)})
+            except Exception as exc:
+                print("reverse geocode error:", repr(exc))
+                self.json_response(503, {"error": "Service de localisation temporairement indisponible."})
+            return
+
         if path == "/api/health":
             try:
                 with db() as conn:

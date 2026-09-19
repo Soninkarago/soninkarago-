@@ -83,6 +83,7 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 .sub,small{color:var(--muted)}.hidden{display:none!important}.error{margin-top:10px;color:#a52934}.success{margin-top:10px;color:var(--brand)}.gpsInfo{margin-top:9px;color:var(--muted);font-size:13px}.gpsActive{color:var(--brand);font-weight:700}
 #fare{margin:24px 0 4px;color:#161916;font-size:34px;line-height:1;font-weight:780;letter-spacing:-.05em}
 #clientMap,#driverMap{height:320px;margin-top:14px;overflow:hidden;border:1px solid var(--line);border-radius:16px}
+#pickupMap{height:220px;margin-top:12px;overflow:hidden;border:1px solid var(--line);border-radius:16px;background:#eef1ed}.location-card{margin:10px 0 4px;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:#f7f8f5}.location-card strong{display:block;margin-bottom:4px}.location-live{color:var(--brand);font-weight:700}.location-muted{color:var(--muted);font-size:13px}
 #dakarBooking,#minicarBooking>div{margin-top:14px!important;padding:18px!important;border:1px solid var(--line)!important;border-radius:16px!important;background:#f7f7f4!important;color:var(--ink)!important}
 #dakarBooking h3,#minicarBooking h3{margin-top:0}
 #dakarBooking .sub,#minicarBooking .sub{color:var(--muted)!important}
@@ -477,6 +478,14 @@ Minicar 14 places — Ziguinchor → Dakar — 150 000 F
   <p class="sub">Indiquez simplement votre départ et votre destination. SoninkaraGo détecte automatiquement la ville et cherche les lieux autour de vous.</p>
 
   <div id="urbanZoneInfo" class="gpsInfo">Ville détectée automatiquement à partir du départ.</div>
+  <div class="location-card">
+    <strong>Votre position</strong>
+    <div id="pickupLocationText" class="location-muted">Localisation en attente.</div>
+    <div class="inline-actions" style="margin-top:8px">
+      <button type="button" id="useMyLocation" class="secondary">Utiliser ma position</button>
+    </div>
+  </div>
+  <div id="pickupMap" class="hidden" aria-label="Carte de votre position"></div>
 
   <label for="dakarPickup">Départ</label>
   <input id="dakarPickup" placeholder="Rue, quartier, commerce ou lieu connu" autocomplete="street-address">
@@ -1424,6 +1433,10 @@ let clientWatchId = null;
 let driverWatchId = null;
 
 let clientMap = null;
+let pickupMap = null;
+let pickupMarker = null;
+let pickupLocationCoords = null;
+let pickupLocationRequested = false;
 let dakarQuoteToken = '';
 let dakarQuoteRequest = 0;
 let driverMap = null;
@@ -1448,6 +1461,67 @@ function isMinicarRoute(){
   return $('#route').value.startsWith('minicar_');
 }
 
+
+function createPickupMap(lat,lng){
+  const box=$('#pickupMap');
+  if(!box || typeof L==='undefined') return;
+  box.classList.remove('hidden');
+  if(!pickupMap){
+    pickupMap=L.map('pickupMap',{zoomControl:true}).setView([lat,lng],15);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+      maxZoom:19,
+      attribution:'© OpenStreetMap'
+    }).addTo(pickupMap);
+  }
+  if(!pickupMarker){
+    pickupMarker=L.marker([lat,lng]).addTo(pickupMap).bindPopup('Votre position');
+  }else{
+    pickupMarker.setLatLng([lat,lng]);
+  }
+  pickupMap.setView([lat,lng],15);
+  setTimeout(()=>pickupMap.invalidateSize(),180);
+}
+
+async function reverseCurrentPosition(lat,lng){
+  return get('/location/reverse?lat='+encodeURIComponent(lat)+'&lng='+encodeURIComponent(lng));
+}
+
+async function locateUrbanPickup(force=false){
+  if(!isDakarRoute()) return;
+  if(pickupLocationRequested && !force) return;
+  pickupLocationRequested=true;
+  const info=$('#pickupLocationText');
+  const btn=$('#useMyLocation');
+  if(info) info.textContent='Recherche de votre position…';
+  if(btn) btn.disabled=true;
+  try{
+    const coords=await getDispatchPosition();
+    pickupLocationCoords=coords;
+    createPickupMap(coords.lat,coords.lng);
+    const place=await reverseCurrentPosition(coords.lat,coords.lng);
+    const address=(place.address||'').trim();
+    if(address){
+      $('#dakarPickup').value=address;
+    }
+    detectedUrbanZone=place.zone||'';
+    updateUrbanZoneInfo(place.zone_label||place.city||'');
+    clearDakarQuote(false);
+    // clearDakarQuote resets zone, so restore the detected location context.
+    detectedUrbanZone=place.zone||'';
+    updateUrbanZoneInfo(place.zone_label||place.city||'');
+    if(info){
+      info.innerHTML='<span class="location-live">Position détectée</span>'+
+        (place.city?' · '+esc(place.city):'')+
+        (address?'<br>'+esc(address):'');
+    }
+  }catch(e){
+    pickupLocationRequested=false;
+    if(info) info.textContent=e.message||'Position introuvable. Vous pouvez saisir votre départ manuellement.';
+  }finally{
+    if(btn) btn.disabled=false;
+  }
+}
+
 let detectedUrbanZone='';
 let detectedUrbanZoneLabel='';
 function isDakarRoute(){return $('#route').value === 'urban_car';}
@@ -1459,16 +1533,20 @@ function updateUrbanZoneInfo(label=''){
     : 'Ville détectée automatiquement à partir du départ.';
 }
 
-function clearDakarQuote(){
+function clearDakarQuote(resetZone=true){
   dakarQuoteRequest += 1;
   dakarQuoteToken = '';
-  detectedUrbanZone='';
-  updateUrbanZoneInfo('');
+  if(resetZone){
+    detectedUrbanZone='';
+    updateUrbanZoneInfo('');
+  }
   $('#dakarQuoteInfo').textContent = '';
   if(isDakarRoute()) $('#fare').textContent = 'Calculez le prix du trajet';
 }
-$('#dakarPickup').addEventListener('input',clearDakarQuote);
+$('#dakarPickup').addEventListener('input',()=>{ pickupLocationCoords=null; clearDakarQuote(); });
 $('#dakarDestination').addEventListener('input',clearDakarQuote);
+
+$('#useMyLocation').onclick=()=>locateUrbanPickup(true);
 
 $('#dakarQuoteBtn').onclick=async()=>{
   clearDakarQuote();
@@ -1499,7 +1577,11 @@ function updateFare(){
 
   $('#fare').textContent = dakar ? 'Calculez le prix du trajet' : money(prices[code] || 0);
   $('#dakarBooking').classList.toggle('hidden', !dakar);
-  if(!dakar) clearDakarQuote();
+  if(!dakar){
+    clearDakarQuote();
+  }else{
+    setTimeout(()=>locateUrbanPickup(false),120);
+  }
 
   $('#minicarBooking').classList.toggle(
     'hidden',
