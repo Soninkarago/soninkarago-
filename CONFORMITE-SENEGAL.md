@@ -50,3 +50,11 @@ Aucune version logicielle ne peut, à elle seule, remplacer une autorisation adm
 - Health/readiness enrichi avec base de données, configuration cartographie/paiement et objectifs RPO/RTO.
 - Runbook de sauvegarde/restauration et de gestion d’incident ajouté.
 - L’authentification administrateur existante reste volontairement inchangée dans cette version, conformément à la décision du responsable.
+
+## V36 — séparation stricte des catégories de transport
+- Trois entrées client distinctes : Voiture classique, Villages, Minicar.
+- Catégorie Villages : seulement Moto-taxi, Taxi local et 3 roues.
+- Catégorie Minicar : seulement les liaisons Minicar 14 places.
+- Catégorie Voiture classique : seulement la course point A → point B avec géolocalisation/adresses.
+- Les options incompatibles sont masquées ET désactivées dans le sélecteur afin d’éviter les mélanges de catégories, y compris via clavier, restauration navigateur ou autofill.
+- Le mot de passe administrateur n’est pas modifié.

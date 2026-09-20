@@ -288,10 +288,13 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 <h2>Réserver un trajet</h2>
 <p class="sub">Vous pouvez réserver pour vous-même ou pour un proche.</p>
 
-<div class="service-shortcuts" aria-label="Choisir rapidement un service">
-  <button type="button" class="service-shortcut" data-route="urban_car"><strong>Voiture</strong><span>Course à la demande dans les grandes villes</span></button>
-  <button type="button" class="service-shortcut" data-route="local_moto"><strong>Moto / Taxi local</strong><span>Villages et petites localités · départ détecté automatiquement</span></button>
-  <button type="button" class="service-shortcut" data-route="minicar_dakar_moudery"><strong>Minicar</strong><span>Longues distances et groupes</span></button>
+<div class="service-shortcuts" aria-label="Choisir une catégorie de transport">
+  <button type="button" class="service-shortcut" data-service-category="urban"><strong>Voiture classique</strong><span>Trajets point A → point B dans les villes et zones urbaines</span></button>
+  <button type="button" class="service-shortcut active" data-service-category="village"><strong>Villages</strong><span>Moto-taxi, taxi local et 3 roues uniquement</span></button>
+  <button type="button" class="service-shortcut" data-service-category="minicar"><strong>Minicar</strong><span>Réservations longue distance en minicar uniquement</span></button>
+</div>
+<div id="serviceCategoryInfo" class="gpsInfo" style="margin-bottom:12px">
+  Villages et petites localités : choisissez uniquement Moto-taxi, Taxi local ou 3 roues.
 </div>
 
 <label>Pour qui réservez-vous ?</label>
@@ -321,134 +324,134 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 
 <label>Service</label>
 <select id="route">
-<optgroup label="Voiture classique — course à la demande">
-<option value="urban_car">Voiture classique — choisissez votre ville et votre trajet</option>
+<optgroup id="routeGroupUrban" label="Voiture classique — course à la demande">
+<option data-category="urban" value="urban_car">Voiture classique — choisissez votre ville et votre trajet</option>
 </optgroup>
 
-<optgroup label="Villages et petites localités">
-<option value="local_moto" selected>Moto-taxi — villages et petites localités</option>
-<option value="local_taxi">Taxi local — villages et petites localités</option>
-<option value="local_tricycle">3 roues — villages et petites localités</option>
+<optgroup id="routeGroupVillage" label="Villages et petites localités">
+<option data-category="village" value="local_moto" selected>Moto-taxi — villages et petites localités</option>
+<option data-category="village" value="local_taxi">Taxi local — villages et petites localités</option>
+<option data-category="village" value="local_tricycle">3 roues — villages et petites localités</option>
 </optgroup>
-<optgroup label="Minicar 14 places — véhicule complet">
+<optgroup id="routeGroupMinicar" label="Minicar 14 places — véhicule complet">
 
-<option value="minicar_dakar_touba">
+<option data-category="minicar" value="minicar_dakar_touba">
 Minicar 14 places — Dakar → Touba — 70 000 F
 </option>
 
-<option value="minicar_touba_dakar">
+<option data-category="minicar" value="minicar_touba_dakar">
 Minicar 14 places — Touba → Dakar — 70 000 F
 </option>
 
 
-<option value="minicar_dakar_matam">
+<option data-category="minicar" value="minicar_dakar_matam">
 Minicar 14 places — Dakar → Matam — 180 000 F
 </option>
 
-<option value="minicar_matam_dakar">
+<option data-category="minicar" value="minicar_matam_dakar">
 Minicar 14 places — Matam → Dakar — 180 000 F
 </option>
 
 
-<option value="minicar_dakar_bakel">
+<option data-category="minicar" value="minicar_dakar_bakel">
 Minicar 14 places — Dakar → Bakel — 190 000 F
 </option>
 
-<option value="minicar_bakel_dakar">
+<option data-category="minicar" value="minicar_bakel_dakar">
 Minicar 14 places — Bakel → Dakar — 190 000 F
 </option>
 
 
-<option value="minicar_dakar_khadebere">
+<option data-category="minicar" value="minicar_dakar_khadebere">
 Minicar 14 places — Dakar → Khadé Béré — 190 000 F
 </option>
 
-<option value="minicar_khadebere_dakar">
+<option data-category="minicar" value="minicar_khadebere_dakar">
 Minicar 14 places — Khadé Béré → Dakar — 190 000 F
 </option>
 
 
-<option value="minicar_moudery_ourossogui">
+<option data-category="minicar" value="minicar_moudery_ourossogui">
 Minicar 14 places — Moudéry → Ourossogui — 70 000 F
 </option>
 
-<option value="minicar_ourossogui_moudery">
+<option data-category="minicar" value="minicar_ourossogui_moudery">
 Minicar 14 places — Ourossogui → Moudéry — 70 000 F
 </option>
 
 
-<option value="minicar_dakar_ourossogui">
+<option data-category="minicar" value="minicar_dakar_ourossogui">
 Minicar 14 places — Dakar → Ourossogui — 180 000 F
 </option>
 
-<option value="minicar_ourossogui_dakar">
+<option data-category="minicar" value="minicar_ourossogui_dakar">
 Minicar 14 places — Ourossogui → Dakar — 180 000 F
 </option>
 
 
-<option value="minicar_dakar_waounde">
+<option data-category="minicar" value="minicar_dakar_waounde">
 Minicar 14 places — Dakar → Waoundé — 200 000 F
 </option>
 
-<option value="minicar_waounde_dakar">
+<option data-category="minicar" value="minicar_waounde_dakar">
 Minicar 14 places — Waoundé → Dakar — 200 000 F
 </option>
 
 
-<option value="minicar_dakar_diawara">
+<option data-category="minicar" value="minicar_dakar_diawara">
 Minicar 14 places — Dakar → Diawara — 190 000 F
 </option>
 
-<option value="minicar_diawara_dakar">
+<option data-category="minicar" value="minicar_diawara_dakar">
 Minicar 14 places — Diawara → Dakar — 190 000 F
 </option>
 
 
-<option value="minicar_dakar_moudery">
+<option data-category="minicar" value="minicar_dakar_moudery">
 Minicar 14 places — Dakar → Moudéry — 190 000 F
 </option>
 
-<option value="minicar_moudery_dakar">
+<option data-category="minicar" value="minicar_moudery_dakar">
 Minicar 14 places — Moudéry → Dakar — 190 000 F
 </option>
 
 
-<option value="minicar_dakar_tambacounda">
+<option data-category="minicar" value="minicar_dakar_tambacounda">
 Minicar 14 places — Dakar → Tambacounda — 160 000 F
 </option>
 
-<option value="minicar_tambacounda_dakar">
+<option data-category="minicar" value="minicar_tambacounda_dakar">
 Minicar 14 places — Tambacounda → Dakar — 160 000 F
 </option>
-<option value="minicar_dakar_louga">
+<option data-category="minicar" value="minicar_dakar_louga">
 Minicar 14 places — Dakar → Louga — 60 000 F
 </option>
 
-<option value="minicar_louga_dakar">
+<option data-category="minicar" value="minicar_louga_dakar">
 Minicar 14 places — Louga → Dakar — 60 000 F
 </option>
 
-<option value="minicar_dakar_kaolack">
+<option data-category="minicar" value="minicar_dakar_kaolack">
 Minicar 14 places — Dakar → Kaolack — 60 000 F
 </option>
 
-<option value="minicar_kaolack_dakar">
+<option data-category="minicar" value="minicar_kaolack_dakar">
 Minicar 14 places — Kaolack → Dakar — 60 000 F
 </option>
 
-<option value="minicar_dakar_saint_louis">
+<option data-category="minicar" value="minicar_dakar_saint_louis">
 Minicar 14 places — Dakar → Saint-Louis — 70 000 F
 </option>
 
-<option value="minicar_saint_louis_dakar">
+<option data-category="minicar" value="minicar_saint_louis_dakar">
 Minicar 14 places — Saint-Louis → Dakar — 70 000 F
 </option>
 
-<option value="minicar_dakar_ziguinchor">
+<option data-category="minicar" value="minicar_dakar_ziguinchor">
 Minicar 14 places — Dakar → Ziguinchor — 150 000 F
 </option>
 
-<option value="minicar_ziguinchor_dakar">
+<option data-category="minicar" value="minicar_ziguinchor_dakar">
 Minicar 14 places — Ziguinchor → Dakar — 150 000 F
 </option>
 </optgroup>
@@ -1000,12 +1003,85 @@ for(const btn of $$('#bookingFor button')){
   });
 }
 
-$$('.service-shortcut').forEach(btn=>btn.addEventListener('click',()=>{
-  $('#route').value=btn.dataset.route;
+const SERVICE_CATEGORIES = {
+  village: {
+    defaultRoute: 'local_moto',
+    label: 'Villages et petites localités : choisissez uniquement Moto-taxi, Taxi local ou 3 roues.'
+  },
+  minicar: {
+    defaultRoute: 'minicar_dakar_moudery',
+    label: 'Minicar : seules les liaisons en minicar 14 places sont proposées.'
+  },
+  urban: {
+    defaultRoute: 'urban_car',
+    label: 'Voiture classique : trajet point A → point B avec géolocalisation et recherche d’adresse dans les villes et zones urbaines.'
+  }
+};
+
+let activeServiceCategory = 'village';
+
+function routeCategoryFromValue(value){
+  if(value === 'urban_car') return 'urban';
+  if(['local_moto','local_taxi','local_tricycle'].includes(value)) return 'village';
+  if(String(value||'').startsWith('minicar_')) return 'minicar';
+  return '';
+}
+
+function applyServiceCategory(category, {scroll=true}={}){
+  if(!SERVICE_CATEGORIES[category]) category='village';
+  activeServiceCategory=category;
+
+  const route=$('#route');
+  const groups={
+    urban: $('#routeGroupUrban'),
+    village: $('#routeGroupVillage'),
+    minicar: $('#routeGroupMinicar')
+  };
+
+  Object.entries(groups).forEach(([key,group])=>{
+    if(!group) return;
+    group.hidden = key !== category;
+    group.disabled = key !== category;
+  });
+
+  // Options from another category are disabled too. This prevents
+  // keyboard/autofill/mobile browser selection from crossing categories.
+  Array.from(route.options).forEach(opt=>{
+    const optCategory=opt.dataset.category || routeCategoryFromValue(opt.value);
+    opt.disabled = optCategory !== category;
+    opt.hidden = optCategory !== category;
+  });
+
+  if(routeCategoryFromValue(route.value) !== category){
+    route.value=SERVICE_CATEGORIES[category].defaultRoute;
+  }
+
+  $$('.service-shortcut').forEach(btn=>{
+    btn.classList.toggle('active',btn.dataset.serviceCategory===category);
+    btn.setAttribute('aria-pressed',btn.dataset.serviceCategory===category ? 'true' : 'false');
+  });
+
+  const info=$('#serviceCategoryInfo');
+  if(info) info.textContent=SERVICE_CATEGORIES[category].label;
+
   updateFare();
-  $$('.service-shortcut').forEach(b=>b.classList.toggle('active',b===btn));
-  $('#route').scrollIntoView({behavior:'smooth',block:'center'});
+  if(scroll) route.scrollIntoView({behavior:'smooth',block:'center'});
+}
+
+$$('.service-shortcut').forEach(btn=>btn.addEventListener('click',()=>{
+  applyServiceCategory(btn.dataset.serviceCategory);
 }));
+
+// Safety: if the service changes by keyboard/browser restore, keep the top-level
+// category synchronized instead of allowing incompatible services together.
+$('#route').addEventListener('change',()=>{
+  const category=routeCategoryFromValue($('#route').value);
+  if(category && category !== activeServiceCategory){
+    applyServiceCategory(category,{scroll:false});
+  }else{
+    updateFare();
+  }
+});
 
 function favoriteRoutes(){
   try{return JSON.parse(localStorage.getItem('favoriteRoutes')||'[]')}catch(e){return []}
@@ -1630,7 +1706,9 @@ function updateFare(){
 
 }
 
-$('#route').onchange = updateFare;
+
+
+applyServiceCategory('village',{scroll:false});
 
 $('#tripType').onchange = () => {
 
