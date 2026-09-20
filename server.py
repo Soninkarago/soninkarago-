@@ -493,6 +493,146 @@ def verify_dakar_quote(token):
 
 
 
+
+LOCAL_SERVICE_CONFIG = {
+    "local_moto": {
+        "service": "Moto-taxi",
+        "label": "Moto-taxi — villages et petites localités",
+        "max_km": 35,
+    },
+    "local_tricycle": {
+        "service": "3 roues",
+        "label": "3 roues — villages et petites localités",
+        "max_km": 8,
+    },
+    "local_taxi": {
+        "service": "Voiture taxi",
+        "label": "Taxi local — villages et petites localités",
+        "max_km": 25,
+    },
+}
+
+
+def local_fare(service_code, km):
+    """Grille SoninkaraGo pour villages et petites localités.
+
+    Le prix progresse par paliers pour éviter les sauts incohérents et conserver
+    un minimum viable pour le chauffeur. Cette grille est commerciale/interne :
+    elle ne doit pas être présentée comme un tarif officiel ou homologué.
+    """
+    km = max(0.0, float(km))
+
+    if service_code == "local_moto":
+        # Référence historique SoninkaraGo : trajet interne au village à petit prix,
+        # liaison entre localités proches à 2 000 F, puis 3 000 F pour une liaison plus longue.
+        # Exemple de référence : Moudéry → Diawara (~6–7 km) = 2 000 F.
+        if km <= 2:
+            return 200
+        if km <= 15:
+            return 2000
+        return 3000  # jusqu'à 35 km (limite du service)
+
+    if service_code == "local_tricycle":
+        # 3 roues : service de proximité, limité à 8 km.
+        if km <= 2:
+            return 500
+        if km <= 4:
+            return 800
+        if km <= 6:
+            return 1200
+        return 1500
+
+    if service_code == "local_taxi":
+        # Taxi local : couvre les trajets courts et les liaisons entre localités proches.
+        if km <= 2:
+            return 1000
+        if km <= 5:
+            return 1500
+        if km <= 10:
+            return 2500
+        if km <= 15:
+            return 3500
+        return 5000  # jusqu'à 25 km (limite du service)
+
+    raise ValueError("Service local invalide.")
+
+
+def local_quote(service_code, pickup, destination):
+    if not MAPS_API_KEY or not AUTH_SECRET:
+        raise RuntimeError("Calcul du trajet momentanément indisponible.")
+    config = LOCAL_SERVICE_CONFIG.get(str(service_code or "").strip())
+    if not config:
+        raise ValueError("Choisissez un service local valide.")
+
+    origin = geocode_senegal(pickup)
+    arrival = geocode_senegal(destination)
+    for point in (origin, arrival):
+        lat, lng = point.get("lat"), point.get("lng")
+        if lat is None or lng is None or not (12.0 <= float(lat) <= 17.5 and -18.5 <= float(lng) <= -11.0):
+            raise ValueError("Le départ et la destination doivent se trouver au Sénégal.")
+
+    travel_mode = "TWO_WHEELER" if service_code == "local_moto" else "DRIVE"
+    payload = {
+        "origin": {"location": {"latLng": {"latitude": origin["lat"], "longitude": origin["lng"]}}},
+        "destination": {"location": {"latLng": {"latitude": arrival["lat"], "longitude": arrival["lng"]}}},
+        "travelMode": travel_mode,
+        "departureTime": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 30)),
+    }
+    if travel_mode == "DRIVE":
+        payload["routingPreference"] = "TRAFFIC_AWARE"
+    req = Request(
+        "https://routes.googleapis.com/directions/v2:computeRoutes",
+        json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": MAPS_API_KEY,
+            "X-Goog-FieldMask": "routes.distanceMeters,routes.duration",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=12) as response:
+            route = json.load(response)["routes"][0]
+    except (URLError, TimeoutError, KeyError, IndexError, ValueError) as exc:
+        raise RuntimeError("Impossible de calculer ce trajet pour le moment.") from exc
+
+    km = int(route["distanceMeters"]) / 1000
+    minutes = math.ceil(float(str(route["duration"]).rstrip("s")) / 60)
+    if km < .1:
+        raise ValueError("Vérifiez le départ et la destination.")
+    if km > float(config["max_km"]):
+        raise ValueError(
+            "Ce trajet dépasse la distance prévue pour ce service local. Choisissez un autre service SoninkaraGo."
+        )
+
+    pickup_place = reverse_geocode_senegal(origin["lat"], origin["lng"])
+    fare = local_fare(service_code, km)
+    quote = {
+        "service_code": service_code,
+        "service": config["service"],
+        "service_label": config["label"],
+        "zone": "local",
+        "zone_label": pickup_place.get("city") or "Village ou petite localité",
+        "pickup": origin["address"],
+        "destination": arrival["address"],
+        "lat": origin["lat"],
+        "lng": origin["lng"],
+        "distance_km": round(km, 1),
+        "duration_min": minutes,
+        "fare": fare,
+        "exp": int(time.time()) + 300,
+    }
+    body = b64(json.dumps(quote, separators=(",", ":")).encode())
+    signature = hmac.new(AUTH_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
+    return quote, body + "." + signature
+
+
+def verify_local_quote(token, expected_service):
+    quote = verify_dakar_quote(token)
+    if quote.get("service_code") != expected_service:
+        raise ValueError("Le devis ne correspond pas au service local choisi.")
+    return quote
+
 def compute_live_eta(driver_lat, driver_lng, client_lat, client_lng, vehicle="Voiture taxi"):
     """ETA routier basé sur la position GPS réelle du chauffeur et le trafic Google actuel.
 
@@ -656,115 +796,6 @@ def request_paytech_recharge(recharge_id, amount, payment, driver_id):
 
 
 ROUTES = {
-    # MOTO-TAXI
-    "moto_moudery_bondji": {
-        "service": "Moto-taxi",
-        "pickup": "Moudéry",
-        "destination": "Bondji",
-        "fare": 2000
-    },
-    "moto_bondji_moudery": {
-        "service": "Moto-taxi",
-        "pickup": "Bondji",
-        "destination": "Moudéry",
-        "fare": 2000
-    },
-    "moto_moudery_diawara": {
-        "service": "Moto-taxi",
-        "pickup": "Moudéry",
-        "destination": "Diawara",
-        "fare": 2000
-    },
-    "moto_diawara_moudery": {
-        "service": "Moto-taxi",
-        "pickup": "Diawara",
-        "destination": "Moudéry",
-        "fare": 2000
-    },
-    "moto_moudery_bakel": {
-        "service": "Moto-taxi",
-        "pickup": "Moudéry",
-        "destination": "Bakel",
-        "fare": 3000
-    },
-    "moto_bakel_moudery": {
-        "service": "Moto-taxi",
-        "pickup": "Bakel",
-        "destination": "Moudéry",
-        "fare": 3000
-    },
-    "moto_moudery_bakel_rt": {
-        "service": "Moto-taxi",
-        "pickup": "Moudéry",
-        "destination": "Bakel aller-retour",
-        "fare": 6000
-    },
-
-    # MOTO LOCAL
-    "moto_moudery_local": {
-        "service": "Moto-taxi",
-        "pickup": "Moudéry",
-        "destination": "Moudéry - trajet local",
-        "fare": 200
-    },
-    "moto_bondji_local": {
-        "service": "Moto-taxi",
-        "pickup": "Bondji",
-        "destination": "Bondji - trajet local",
-        "fare": 200
-    },
-    "moto_diawara_local": {
-        "service": "Moto-taxi",
-        "pickup": "Diawara",
-        "destination": "Diawara - trajet local",
-        "fare": 200
-    },
-    "moto_bakel_local": {
-        "service": "Moto-taxi",
-        "pickup": "Bakel",
-        "destination": "Bakel - trajet local",
-        "fare": 200
-    },
-
-    # 3 ROUES
-    "tricycle_moudery_local": {
-        "service": "3 roues",
-        "pickup": "Moudéry",
-        "destination": "Moudéry - trajet local",
-        "fare": 500
-    },
-
-    # VOITURE TAXI
-    "car_moudery_bondji": {
-        "service": "Voiture taxi",
-        "pickup": "Moudéry",
-        "destination": "Bondji",
-        "fare": 2500
-    },
-    "car_bondji_moudery": {
-        "service": "Voiture taxi",
-        "pickup": "Bondji",
-        "destination": "Moudéry",
-        "fare": 2500
-    },
-    "car_moudery_diawara": {
-        "service": "Voiture taxi",
-        "pickup": "Moudéry",
-        "destination": "Diawara",
-        "fare": 2500
-    },
-    "car_diawara_moudery": {
-        "service": "Voiture taxi",
-        "pickup": "Diawara",
-        "destination": "Moudéry",
-        "fare": 2500
-    },
-    "car_moudery_bakel_rt": {
-        "service": "Voiture taxi",
-        "pickup": "Moudéry",
-        "destination": "Bakel aller-retour",
-        "fare": 20000
-    },
     # MINICAR 14 PLACES
     "minicar_dakar_touba": {
         "service": "Minicar 14 places",
@@ -940,13 +971,7 @@ ROUTES = {
 }
 
 
-ALLOWED_VILLAGES = [
-    "Moudéry",
-    "Bondji",
-    "Diawara",
-    "Bakel",
-    "Dakar", "Pikine", "Guédiawaye", "Keur Massar", "Rufisque"
-]
+ALLOWED_VILLAGES = None  # Toutes les localités du Sénégal sont acceptées.
 
 ALLOWED_VEHICLES = [
     "Moto-taxi",
@@ -1497,6 +1522,7 @@ def assign_next_driver(conn, ride_id, now=None):
     ).fetchall()
 
     urban_zone_code = None
+    local_route = str(ride.get("route_code") or "") in LOCAL_SERVICE_CONFIG
     if ride["route_code"] == "dakar_car":
         urban_zone_code = "dakar"
     elif str(ride["route_code"] or "").startswith("urban_car_"):
@@ -1506,7 +1532,11 @@ def assign_next_driver(conn, ride_id, now=None):
         driver for driver in drivers
         if driver["id"] not in attempted
         and (
-            not urban_zone_code
+            (not urban_zone_code and not local_route)
+            or (local_route and distance_km(
+                ride["client_lat"], ride["client_lng"],
+                driver["latitude"], driver["longitude"]
+            ) <= 20)
             or (
                 in_urban_service_zone(
                     urban_zone_code, driver["latitude"], driver["longitude"]
@@ -2346,6 +2376,42 @@ class App(SimpleHTTPRequestHandler):
                 return self.sendj({"error": str(exc)}, 400)
             except RuntimeError as exc:
                 return self.sendj({"error": str(exc)}, 503)
+        if path == "/api/local/quote":
+            if not self.check_rate("local-quote", 30, 3600):
+                return
+            try:
+                service_code = str(data.get("service") or "").strip()
+                quote, token = local_quote(
+                    service_code,
+                    data.get("pickup"),
+                    data.get("destination")
+                )
+                vehicle = LOCAL_SERVICE_CONFIG[service_code]["service"]
+                with db() as conn:
+                    available = conn.execute("""
+                        SELECT latitude, longitude FROM drivers
+                        WHERE status='approved' AND online=TRUE AND vehicle=%s
+                          AND latitude IS NOT NULL AND longitude IS NOT NULL
+                          AND last_location_at >= %s
+                          AND balance >= %s
+                          AND NOT EXISTS (
+                              SELECT 1 FROM rides r
+                              WHERE r.driver_id=drivers.id AND r.status='accepted'
+                          )
+                    """, (vehicle, int(time.time()) - 300, (quote["fare"] + 9) // 10)).fetchall()
+                available = sum(
+                    distance_km(
+                        quote["lat"], quote["lng"],
+                        d["latitude"], d["longitude"]
+                    ) <= 20
+                    for d in available
+                )
+                return self.sendj({**quote, "quote_token": token, "drivers_online": available})
+            except ValueError as exc:
+                return self.sendj({"error": str(exc)}, 400)
+            except RuntimeError as exc:
+                return self.sendj({"error": str(exc)}, 503)
+
         if path == "/api/paytech/ipn":
             if not PAYTECH_API_KEY or not PAYTECH_API_SECRET:
                 return self.sendj({"error": "PayTech non configuré"}, 503)
@@ -2796,12 +2862,9 @@ class App(SimpleHTTPRequestHandler):
                 )
 
 
-            if village not in ALLOWED_VILLAGES:
+            if len(village) < 2 or len(village) > 100:
                 return self.sendj(
-                    {
-                        "error":
-                        "Village invalide"
-                    },
+                    {"error": "Indiquez votre localité ou votre zone d’activité."},
                     400
                 )
 
@@ -3324,7 +3387,19 @@ class App(SimpleHTTPRequestHandler):
             ).strip()
 
             route = ROUTES.get(route_code)
+            local_ride = route_code in LOCAL_SERVICE_CONFIG
             urban_ride = route_code == "dakar_car" or route_code.startswith("urban_car_")
+            if local_ride:
+                try:
+                    quote = verify_local_quote(str(data.get("quote_token", "")), route_code)
+                except ValueError as exc:
+                    return self.sendj({"error": str(exc)}, 400)
+                route = {
+                    "service": LOCAL_SERVICE_CONFIG[route_code]["service"],
+                    "pickup": quote["pickup"],
+                    "destination": quote["destination"],
+                    "fare": quote["fare"],
+                }
             if urban_ride:
                 try:
                     quote = verify_dakar_quote(str(data.get("quote_token", "")))

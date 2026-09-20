@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Réservez un trajet SoninkaraGo à Moudéry, Bondji, Diawara, Bakel et sur les lignes interurbaines.">
+<meta name="description" content="Réservez un trajet SoninkaraGo dans les villes, villages et petites localités du Sénégal, ainsi que sur les lignes interurbaines.">
 <meta name="theme-color" content="#006b3c">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -290,7 +290,7 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 
 <div class="service-shortcuts" aria-label="Choisir rapidement un service">
   <button type="button" class="service-shortcut" data-route="urban_car"><strong>Voiture</strong><span>Course à la demande dans les grandes villes</span></button>
-  <button type="button" class="service-shortcut" data-route="moto_moudery_bondji"><strong>Moto / Taxi</strong><span>Moudéry, Bondji, Diawara, Bakel</span></button>
+  <button type="button" class="service-shortcut" data-route="local_moto"><strong>Moto / Taxi local</strong><span>Villages et petites localités · départ détecté automatiquement</span></button>
   <button type="button" class="service-shortcut" data-route="minicar_dakar_moudery"><strong>Minicar</strong><span>Longues distances et groupes</span></button>
 </div>
 
@@ -325,30 +325,10 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 <option value="urban_car">Voiture classique — choisissez votre ville et votre trajet</option>
 </optgroup>
 
-<optgroup label="Moto-taxi">
-<option value="moto_moudery_bondji" selected>Moto-taxi — Moudéry → Bondji — 2 000 F</option>
-<option value="moto_bondji_moudery">Moto-taxi — Bondji → Moudéry — 2 000 F</option>
-<option value="moto_moudery_diawara">Moto-taxi — Moudéry → Diawara — 2 000 F</option>
-<option value="moto_diawara_moudery">Moto-taxi — Diawara → Moudéry — 2 000 F</option>
-<option value="moto_moudery_bakel">Moto-taxi — Moudéry → Bakel — 3 000 F</option>
-<option value="moto_bakel_moudery">Moto-taxi — Bakel → Moudéry — 3 000 F</option>
-<option value="moto_moudery_bakel_rt">Moto-taxi — Moudéry ↔ Bakel aller-retour — 6 000 F</option>
-<option value="moto_moudery_local">Moto-taxi — trajet dans Moudéry — 200 F</option>
-<option value="moto_bondji_local">Moto-taxi — trajet dans Bondji — 200 F</option>
-<option value="moto_diawara_local">Moto-taxi — trajet dans Diawara — 200 F</option>
-<option value="moto_bakel_local">Moto-taxi — trajet dans Bakel — 200 F</option>
-</optgroup>
-
-<optgroup label="3 roues">
-<option value="tricycle_moudery_local">3 roues — trajet dans Moudéry — 500 F</option>
-</optgroup>
-
-<optgroup label="Voiture taxi">
-<option value="car_moudery_bondji">Voiture taxi — Moudéry → Bondji — 2 500 F</option>
-<option value="car_bondji_moudery">Voiture taxi — Bondji → Moudéry — 2 500 F</option>
-<option value="car_moudery_diawara">Voiture taxi — Moudéry → Diawara — 2 500 F</option>
-<option value="car_diawara_moudery">Voiture taxi — Diawara → Moudéry — 2 500 F</option>
-<option value="car_moudery_bakel_rt">Voiture taxi — Moudéry ↔ Bakel aller-retour — 20 000 F</option>
+<optgroup label="Villages et petites localités">
+<option value="local_moto" selected>Moto-taxi — villages et petites localités</option>
+<option value="local_taxi">Taxi local — villages et petites localités</option>
+<option value="local_tricycle">3 roues — villages et petites localités</option>
 </optgroup>
 <optgroup label="Minicar 14 places — véhicule complet">
 
@@ -474,10 +454,10 @@ Minicar 14 places — Ziguinchor → Dakar — 150 000 F
 </optgroup>
 </select>
 <div id="dakarBooking" class="hidden" style="margin-top:15px;padding:15px;border:1px solid #e2e3df;border-radius:15px;background:#082d1e">
-  <h3>Voiture classique</h3>
-  <p class="sub">Indiquez simplement votre départ et votre destination. SoninkaraGo détecte automatiquement la ville et cherche les lieux autour de vous.</p>
+  <h3 id="locationBookingTitle">Trajet avec localisation</h3>
+  <p id="locationBookingSub" class="sub">Indiquez votre destination. SoninkaraGo utilise votre position pour identifier automatiquement votre zone de départ.</p>
 
-  <div id="urbanZoneInfo" class="gpsInfo">Ville détectée automatiquement à partir du départ.</div>
+  <div id="urbanZoneInfo" class="gpsInfo">Localité détectée automatiquement à partir du départ.</div>
   <div class="location-card">
     <strong>Votre position</strong>
     <div id="pickupLocationText" class="location-muted">Localisation en attente.</div>
@@ -577,7 +557,7 @@ Minicar 14 places — Ziguinchor → Dakar — 150 000 F
 <option>Orange Money</option>
 </select>
 
-<h3 id="fare">2 000 F</h3>
+<h3 id="fare">Calculez le prix du trajet</h3>
 
 <div class="legal-consent">
 <label class="checkline"><input type="checkbox" id="acceptTerms"><span>J’accepte les <a href="/conditions" target="_blank" rel="noopener">Conditions générales d’utilisation</a> et la <a href="/confidentialite" target="_blank" rel="noopener">Politique de confidentialité</a>.</span></label>
@@ -782,21 +762,8 @@ S'inscrire comme chauffeur
   <input id="registerPhone" type="tel" autocomplete="tel-national" placeholder="Numéro de téléphone" inputmode="tel" required>
 </div>
 
-<label>Village / zone</label>
-<select id="registerVillage">
-<option>Moudéry</option>
-<option>Bondji</option>
-<option>Diawara</option>
-<option>Bakel</option>
-<option>Dakar</option>
-<option>Pikine</option>
-<option>Guédiawaye</option>
-<option>Keur Massar</option>
-<option>Rufisque</option>
-<option>Diamniadio</option>
-<option>AIBD</option>
-<option>Thiès</option>
-</select>
+<label>Localité / zone d’activité</label>
+<input id="registerVillage" autocomplete="address-level2" placeholder="Détectée par votre position ou saisie libre">
 
 <label>Type de véhicule</label>
 <select id="registerVehicle">
@@ -1397,23 +1364,9 @@ const statusLabel=status=>({
 }[String(status||'').toLowerCase()] || String(status||'').replaceAll('_',' '));
 
 const prices={
-moto_moudery_bondji:2000,
-moto_bondji_moudery:2000,
-moto_moudery_diawara:2000,
-moto_diawara_moudery:2000,
-moto_moudery_bakel:3000,
-moto_bakel_moudery:3000,
-moto_moudery_bakel_rt:6000,
-moto_moudery_local:200,
-moto_bondji_local:200,
-moto_diawara_local:200,
-moto_bakel_local:200,
-tricycle_moudery_local:500,
-car_moudery_bondji:2500,
-car_bondji_moudery:2500,
-car_moudery_diawara:2500,
-car_diawara_moudery:2500,
-car_moudery_bakel_rt:20000,
+local_moto:2000,
+local_tricycle:500,
+local_taxi:2500,
 minicar_dakar_touba:70000,
 minicar_touba_dakar:70000,
 
@@ -1526,7 +1479,7 @@ async function reverseCurrentPosition(lat,lng){
 }
 
 async function locateUrbanPickup(force=false){
-  if(!isDakarRoute()) return;
+  if(!isLocationRoute()) return;
   if(pickupLocationRequested && !force) return;
   pickupLocationRequested=true;
   const info=$('#pickupLocationText');
@@ -1563,13 +1516,15 @@ async function locateUrbanPickup(force=false){
 
 let detectedUrbanZone='';
 let detectedUrbanZoneLabel='';
+function isLocalRoute(){return ['local_moto','local_taxi','local_tricycle'].includes($('#route').value);}
+function isLocationRoute(){return isDakarRoute() || isLocalRoute();}
 function isDakarRoute(){return $('#route').value === 'urban_car';}
 function selectedUrbanZone(){return detectedUrbanZone || '';}
 function updateUrbanZoneInfo(label=''){
   detectedUrbanZoneLabel=label||'';
   $('#urbanZoneInfo').textContent=label
-    ? 'Zone détectée : '+label+'.'
-    : 'Ville détectée automatiquement à partir du départ.';
+    ? 'Localité détectée : '+label+'.'
+    : 'Localité détectée automatiquement à partir du départ.';
 }
 
 function clearDakarQuote(resetZone=true){
@@ -1580,7 +1535,7 @@ function clearDakarQuote(resetZone=true){
     updateUrbanZoneInfo('');
   }
   $('#dakarQuoteInfo').textContent = '';
-  if(isDakarRoute()) $('#fare').textContent = 'Calculez le prix du trajet';
+  if(isLocationRoute()) $('#fare').textContent = 'Calculez le prix du trajet';
 }
 $('#dakarPickup').addEventListener('input',()=>{ pickupLocationCoords=null; clearDakarQuote(); });
 $('#dakarDestination').addEventListener('input',clearDakarQuote);
@@ -1594,15 +1549,16 @@ $('#dakarQuoteBtn').onclick=async()=>{
   const destination = $('#dakarDestination').value.trim();
   $('#dakarQuoteInfo').textContent='Calcul du trajet et de la circulation…';
   try{
-    const q=await post('/urban/quote',{pickup,destination});
-    if(requestId !== dakarQuoteRequest || !isDakarRoute()) return;
+    const localService=isLocalRoute() ? $('#route').value : '';
+    const q=await post(localService ? '/local/quote' : '/urban/quote',{pickup,destination,service:localService});
+    if(requestId !== dakarQuoteRequest || !isLocationRoute()) return;
     dakarQuoteToken=q.quote_token;
     detectedUrbanZone=q.zone||'';
     updateUrbanZoneInfo(q.zone_label||'');
     $('#fare').textContent=money(q.fare);
     $('#dakarQuoteInfo').textContent=
       q.pickup+' → '+q.destination+' · '+q.distance_km+' km · '+q.duration_min+
-      ' min avec circulation · '+q.drivers_online+' chauffeur(s) disponible(s) à moins de 20 km du départ. Devis valable 5 minutes.';
+      ' min · '+q.drivers_online+' chauffeur(s) compatible(s) disponible(s) à moins de 20 km du départ. Devis valable 5 minutes.';
   }catch(e){
     if(requestId === dakarQuoteRequest) $('#dakarQuoteInfo').textContent=e.message;
   }
@@ -1613,10 +1569,16 @@ function updateFare(){
   const code = $('#route').value;
   const minicar = isMinicarRoute();
   const dakar = isDakarRoute();
+  const local = isLocalRoute();
+  const located = dakar || local;
 
-  $('#fare').textContent = dakar ? 'Calculez le prix du trajet' : money(prices[code] || 0);
-  $('#dakarBooking').classList.toggle('hidden', !dakar);
-  if(!dakar){
+  $('#fare').textContent = located ? 'Calculez le prix du trajet' : money(prices[code] || 0);
+  $('#dakarBooking').classList.toggle('hidden', !located);
+  $('#locationBookingTitle').textContent = dakar ? 'Voiture classique' : ({local_moto:'Moto-taxi',local_taxi:'Taxi local',local_tricycle:'3 roues'}[code] || 'Trajet local');
+  $('#locationBookingSub').textContent = dakar
+    ? 'Indiquez votre destination. SoninkaraGo détecte automatiquement votre zone de départ.'
+    : 'Service destiné aux villages et petites localités. Votre départ est identifié par la localisation ; saisissez simplement votre destination.';
+  if(!located){
     clearDakarQuote();
   }else{
     const gpsConsent = document.querySelector('#acceptLocation');
@@ -1805,8 +1767,8 @@ if(termsBox && !termsBox.checked){
 }
 const minicar = isMinicarRoute();
 const dakar = isDakarRoute();
-if(dakar && !dakarQuoteToken){
-  throw new Error('Calculez d’abord le prix du trajet dans la ville choisie.');
+if((dakar || isLocalRoute()) && !dakarQuoteToken){
+  throw new Error('Calculez d’abord le prix du trajet.');
 }
 
 $('#orderSuccess').textContent = minicar
@@ -1879,6 +1841,8 @@ if(bookingForValue==='other'){
   otherPassengerNote=`Réservation faite par ${bookerName} (${bookerPhone.phone}).`;
 }
 
+const localRide=isLocalRoute();
+
 const r=await post(
 '/rides',
 {
@@ -1888,7 +1852,7 @@ const r=await post(
 
   route_code:
     dakar ? ('urban_car_'+selectedUrbanZone()) : $('#route').value,
-  quote_token: dakar ? dakarQuoteToken : '',
+  quote_token: (dakar || localRide) ? dakarQuoteToken : '', 
 
   payment:
     $('#payment').value,
@@ -1944,13 +1908,13 @@ const r=await post(
 
 lastRide=r.id;
 $('#shareRide')?.classList.remove('hidden');
-localStorage.setItem('lastRideIsDakar', dakar ? '1' : '0');
+localStorage.setItem('lastRideIsDakar', (dakar || localRide) ? '1' : '0');
 
 localStorage.setItem(
 'lastRide',
 lastRide
 );
-const recentLabel = dakar
+const recentLabel = (dakar || localRide)
   ? `${$('#dakarPickup').value.trim()} → ${$('#dakarDestination').value.trim()}`
   : $('#route').selectedOptions[0]?.textContent?.trim() || 'Trajet SoninkaraGo';
 saveRecentTrip({
@@ -1959,8 +1923,8 @@ saveRecentTrip({
   phone:$('#phone').value.trim(),
   phone_region:$('#phoneCountry').value,
   payment:$('#payment').value,
-  pickup:dakar?$('#dakarPickup').value.trim():'',
-  destination:dakar?$('#dakarDestination').value.trim():'',
+  pickup:(dakar||localRide)?$('#dakarPickup').value.trim():'',
+  destination:(dakar||localRide)?$('#dakarDestination').value.trim():'',
   label:recentLabel
 });
 trackingToken = r.tracking_token || '';
@@ -1978,7 +1942,7 @@ if(r.payment_url){
 }
 
 
-if(trackingToken && !dakar){
+if(trackingToken && !dakar && !isLocalRoute()){
     $('#clientGpsBtn').classList.remove('hidden');
 }
 $('#orderSuccess').textContent = minicar

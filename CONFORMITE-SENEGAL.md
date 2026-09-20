@@ -26,3 +26,11 @@ Contact : contact@soninkarago.sn — +221 77 408 33 87
 6. Réviser les textes dès changement réglementaire, tarif réglementé ou nouvelle catégorie de transport.
 
 Aucune version logicielle ne peut, à elle seule, remplacer une autorisation administrative ou garantir l’absence totale de risque juridique.
+
+
+## Tarification locale moto - référence commerciale
+- Jusqu’à 2 km : 200 F CFA (trajet interne / très courte distance).
+- Plus de 2 km à 15 km : 2 000 F CFA.
+- Plus de 15 km à 35 km : 3 000 F CFA.
+- La distance provient de l’itinéraire calculé par le service cartographique ; le tarif est fixé par SoninkaraGo et ne doit pas être présenté comme un tarif officiel/homologué.
+- Exemple de référence : Moudéry → Diawara (~6–7 km) = 2 000 F CFA.
