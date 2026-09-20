@@ -58,3 +58,19 @@ Aucune version logicielle ne peut, à elle seule, remplacer une autorisation adm
 - Catégorie Voiture classique : seulement la course point A → point B avec géolocalisation/adresses.
 - Les options incompatibles sont masquées ET désactivées dans le sélecteur afin d’éviter les mélanges de catégories, y compris via clavier, restauration navigateur ou autofill.
 - Le mot de passe administrateur n’est pas modifié.
+
+## V37 — module publicitaire first-party
+- Campagnes vendues directement par SoninkaraGo, sans régie publicitaire tierce activée.
+- Emplacements : accueil client, après réservation, espace chauffeur.
+- Ciblage limité à la catégorie de service (tous / urbain / villages / minicar / chauffeurs), sans profilage individuel.
+- Mesure des impressions et clics avec déduplication d’impression par session/jour.
+- Mention « Partenaire SoninkaraGo » visible.
+- Journal d’audit des créations/changements de statut.
+- Mise à jour de la politique de confidentialité.
+- Toute activation future d’AdMob/AdSense impose une nouvelle revue de confidentialité et, si nécessaire, une mise à jour du dossier CDP.
+
+## V38 — grille grands comptes
+- Ajout d'une grille tarifaire interne de référence pour les annonceurs importants.
+- Les nouveaux montants correspondent aux bases V37 majorées de 20 %.
+- La grille sert d'aide commerciale ; le prix réellement négocié est enregistré dans chaque campagne.
+- Aucun changement de profilage ou de collecte publicitaire.

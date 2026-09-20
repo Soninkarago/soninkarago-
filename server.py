@@ -39,7 +39,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.09.20-v36-service-category-isolation"
+APP_VERSION = "2026.09.20-v38-enterprise-ad-rate-card"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -187,6 +187,37 @@ def purge_old_operational_logs(conn):
     security_cutoff = now - max(30, SECURITY_LOG_RETENTION_DAYS) * 86400
     conn.execute("DELETE FROM audit_events WHERE created_at < %s", (audit_cutoff,))
     conn.execute("DELETE FROM payment_events WHERE created_at < %s", (security_cutoff,))
+
+
+def now_ts():
+    return int(time.time())
+
+
+def ad_session_hash(headers):
+    raw = "|".join([
+        str(headers.get("User-Agent", ""))[:200],
+        str(headers.get("Accept-Language", ""))[:80],
+        str(headers.get("X-Forwarded-For", "")).split(",")[0].strip()[:64],
+    ])
+    return hashlib.sha256((raw + "|" + AUTH_SECRET[:24]).encode()).hexdigest()[:24]
+
+
+def active_ad_rows(conn, placement, audience="all", limit=3):
+    now = now_ts()
+    return conn.execute(
+        """
+        SELECT id,sponsor_name,title,subtitle,image_url,link_url,placement,audience,pricing_model,price_cfa
+        FROM ad_campaigns
+        WHERE status='active'
+          AND placement=%s
+          AND (starts_at IS NULL OR starts_at<=%s)
+          AND (ends_at IS NULL OR ends_at>=%s)
+          AND (audience='all' OR audience=%s)
+        ORDER BY updated_at DESC
+        LIMIT %s
+        """,
+        (placement, now, now, audience, limit)
+    ).fetchall()
 
 
 URBAN_CAR_ZONES = {
@@ -1441,6 +1472,87 @@ def init():
                 resolution TEXT NOT NULL DEFAULT ''
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ad_campaigns(
+                id TEXT PRIMARY KEY,
+                sponsor_name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                subtitle TEXT NOT NULL DEFAULT '',
+                image_url TEXT NOT NULL DEFAULT '',
+                link_url TEXT NOT NULL DEFAULT '',
+                placement TEXT NOT NULL DEFAULT 'home',
+                audience TEXT NOT NULL DEFAULT 'all',
+                pricing_model TEXT NOT NULL DEFAULT 'fixed_monthly',
+                price_cfa INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'draft',
+                starts_at BIGINT,
+                ends_at BIGINT,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_ad_campaigns_active
+            ON ad_campaigns(status, placement, starts_at, ends_at)
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ad_rate_card(
+                code TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                period TEXT NOT NULL,
+                min_price_cfa INTEGER NOT NULL,
+                max_price_cfa INTEGER NOT NULL,
+                recommended_price_cfa INTEGER NOT NULL,
+                audience TEXT NOT NULL DEFAULT 'all',
+                placement TEXT NOT NULL DEFAULT 'home',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                active BOOLEAN NOT NULL DEFAULT TRUE
+            )
+        """)
+        rate_rows = [
+            ("home_premium","Bannière accueil site + app","mois",600000,1200000,900000,"all","home",10),
+            ("urban_exclusive","Sponsor exclusif Voiture classique","mois",900000,1800000,1350000,"urban","home",20),
+            ("village_exclusive","Sponsor exclusif Villages","mois",720000,1440000,1080000,"village","home",30),
+            ("minicar_exclusive","Sponsor exclusif Minicar","mois",720000,1440000,1080000,"minicar","home",40),
+            ("driver_exclusive","Sponsor espace chauffeurs","mois",900000,1800000,1350000,"driver","driver",50),
+            ("full_pack","Pack site + app + après réservation","mois",1800000,3600000,2700000,"all","post_booking",60),
+            ("mobility_partner","Partenaire officiel mobilité SoninkaraGo","trimestre",3600000,7200000,5400000,"all","home",70),
+            ("national_exclusive","Partenaire national exclusif","an",12000000,30000000,21000000,"all","home",80)
+        ]
+        for row in rate_rows:
+            conn.execute(
+                """
+                INSERT INTO ad_rate_card(
+                    code,label,period,min_price_cfa,max_price_cfa,recommended_price_cfa,
+                    audience,placement,sort_order,active
+                )
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE)
+                ON CONFLICT(code) DO UPDATE SET
+                  label=EXCLUDED.label,
+                  period=EXCLUDED.period,
+                  min_price_cfa=EXCLUDED.min_price_cfa,
+                  max_price_cfa=EXCLUDED.max_price_cfa,
+                  recommended_price_cfa=EXCLUDED.recommended_price_cfa,
+                  audience=EXCLUDED.audience,
+                  placement=EXCLUDED.placement,
+                  sort_order=EXCLUDED.sort_order
+                """,
+                row
+            )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ad_events(
+                id TEXT PRIMARY KEY,
+                campaign_id TEXT NOT NULL REFERENCES ad_campaigns(id) ON DELETE CASCADE,
+                event_type TEXT NOT NULL,
+                placement TEXT NOT NULL,
+                session_hash TEXT NOT NULL DEFAULT '',
+                created_at BIGINT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_ad_events_campaign
+            ON ad_events(campaign_id, event_type, created_at DESC)
+        """)
         purge_old_operational_logs(conn)
 
         conn.execute("""
@@ -2011,6 +2123,49 @@ class App(SimpleHTTPRequestHandler):
                 print("reverse geocode error:", repr(exc))
                 self.json_response(503, {"error": "Service de localisation temporairement indisponible."})
             return
+
+        if path == "/api/ads":
+            params = parse_qs(parsed.query)
+            placement = str((params.get("placement") or ["home"])[0])[:40]
+            audience = str((params.get("audience") or ["all"])[0])[:40]
+            with db() as conn:
+                rows = active_ad_rows(conn, placement, audience, 3)
+            # No personal profile is returned or built. Ads are first-party placements.
+            return self.sendj({"ads": rows})
+
+        if path == "/api/admin/ad-rates":
+            user = self.auth()
+            if not user or user.get("role") != "admin":
+                return self.sendj({"error":"Non autorisé"},401)
+            with db() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT code,label,period,min_price_cfa,max_price_cfa,recommended_price_cfa,
+                           audience,placement,sort_order
+                    FROM ad_rate_card
+                    WHERE active=TRUE
+                    ORDER BY sort_order ASC
+                    """
+                ).fetchall()
+            return self.sendj(rows)
+
+        if path == "/api/admin/ads":
+            user = self.auth()
+            if not user or user.get("role") != "admin":
+                return self.sendj({"error":"Non autorisé"},401)
+            with db() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT c.*,
+                      COALESCE(SUM(CASE WHEN e.event_type='impression' THEN 1 ELSE 0 END),0) AS impressions,
+                      COALESCE(SUM(CASE WHEN e.event_type='click' THEN 1 ELSE 0 END),0) AS clicks
+                    FROM ad_campaigns c
+                    LEFT JOIN ad_events e ON e.campaign_id=c.id
+                    GROUP BY c.id
+                    ORDER BY c.created_at DESC
+                    """
+                ).fetchall()
+            return self.sendj(rows)
 
         if path in ("/api/health", "/api/ready"):
             checks = {

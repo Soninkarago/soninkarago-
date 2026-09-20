@@ -217,6 +217,19 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 .help-card{margin-top:14px;padding:14px;border-radius:16px;background:#101411;color:#fff}.help-card h3{margin:0 0 5px;font-size:16px}.help-card p{margin:0 0 10px;color:#d8ded9;font-size:12.5px;line-height:1.45}.help-card .inline-actions a{background:#fff;color:#101411;border-radius:12px;padding:10px 12px;font-weight:800}
 .recent-trip{display:none}.recent-trip.show{display:block}
 @media(max-width:480px){.how-steps{grid-template-columns:1fr}.service-shortcuts{grid-template-columns:1fr 1fr}.client-intro{padding:15px}.client-intro h1{font-size:28px}}
+
+.sponsored-zone{margin:12px 0 18px}
+.sponsored-label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6d746f;margin-bottom:6px}
+.sponsored-card{display:flex;gap:12px;align-items:center;text-decoration:none;color:inherit;border:1px solid rgba(16,73,50,.16);border-radius:16px;padding:12px;background:#fff;box-shadow:0 6px 18px rgba(0,0,0,.04)}
+.sponsored-card:hover{border-color:rgba(16,73,50,.35)}
+.sponsored-image{width:78px;height:78px;object-fit:cover;border-radius:12px;flex:0 0 auto}
+.sponsored-copy{display:flex;flex-direction:column;gap:3px}
+.sponsored-copy strong{font-size:15px;color:#123d2d}
+.sponsored-copy span{font-size:13px;line-height:1.35;color:#454d48}
+.sponsored-copy small{font-size:11px;color:#767d79}
+.ad-admin-card{border:1px solid #e2e8e4;border-radius:14px;padding:12px;margin:8px 0;background:#fff}
+.ad-admin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+
 </style>
 </head>
 
@@ -296,6 +309,17 @@ button:hover{background:#252925}button:active{transform:translateY(1px)}button:f
 <div id="serviceCategoryInfo" class="gpsInfo" style="margin-bottom:12px">
   Villages et petites localités : choisissez uniquement Moto-taxi, Taxi local ou 3 roues.
 </div>
+<section id="sponsoredHome" class="sponsored-zone" aria-label="Partenaire SoninkaraGo" hidden>
+  <div class="sponsored-label">Partenaire SoninkaraGo</div>
+  <a id="sponsoredHomeLink" href="#" target="_blank" rel="noopener sponsored" class="sponsored-card">
+    <img id="sponsoredHomeImage" alt="" class="sponsored-image" hidden>
+    <div class="sponsored-copy">
+      <strong id="sponsoredHomeTitle"></strong>
+      <span id="sponsoredHomeSubtitle"></span>
+      <small id="sponsoredHomeName"></small>
+    </div>
+  </a>
+</section>
 
 <label>Pour qui réservez-vous ?</label>
 <div class="segmented" id="bookingFor">
@@ -930,6 +954,38 @@ Déconnexion
 <h2>Demandes chauffeurs</h2>
 
 <div id="adminDrivers"></div>
+<h3>Publicité & partenaires</h3>
+<p class="sub">Campagnes vendues directement par SoninkaraGo. Les annonces sont clairement marquées « Partenaire SoninkaraGo ».</p>
+<div class="card">
+  <div class="ad-admin-grid">
+    <input id="adSponsor" placeholder="Nom du sponsor">
+    <input id="adTitle" placeholder="Titre de l’annonce">
+    <input id="adSubtitle" placeholder="Texte court">
+    <input id="adImage" placeholder="URL image (facultatif)">
+    <input id="adLink" placeholder="Lien du sponsor (https://...)">
+    <select id="adRateCard" onchange="applyAdRatePreset()">
+      <option value="">Choisir une offre grands comptes</option>
+    </select>
+    <select id="adPlacement">
+      <option value="home">Accueil client</option>
+      <option value="post_booking">Après réservation</option>
+      <option value="driver">Espace chauffeur</option>
+    </select>
+    <select id="adAudience">
+      <option value="all">Tous</option>
+      <option value="urban">Voiture classique</option>
+      <option value="village">Villages</option>
+      <option value="minicar">Minicar</option>
+      <option value="driver">Chauffeurs</option>
+    </select>
+    <input id="adPrice" type="number" min="0" placeholder="Prix négocié / recommandé (F CFA)">
+  </div>
+  <div id="adRateHint" class="sub" style="margin:8px 0">Grille grands comptes : tarifs de base majorés de 20 %.</div>
+  <button type="button" onclick="createAdCampaign()">Créer la campagne</button>
+</div>
+<div id="adminRateCard"></div>
+<div id="adminAds"></div>
+
 <h3>Journal d’audit</h3>
 <p class="sub">Actions sensibles : vérification chauffeurs, validations, refus et connexions administrateur.</p>
 <div id="adminAudit"></div>
@@ -1065,6 +1121,7 @@ function applyServiceCategory(category, {scroll=true}={}){
   if(info) info.textContent=SERVICE_CATEGORIES[category].label;
 
   updateFare();
+  loadSponsoredHome();
   if(scroll) route.scrollIntoView({behavior:'smooth',block:'center'});
 }
 
@@ -1706,6 +1763,79 @@ function updateFare(){
 
 }
 
+
+
+
+async function loadSponsoredHome(){
+  try{
+    const r=await fetch('/api/ads?placement=home&audience='+encodeURIComponent(activeServiceCategory||'all'));
+    const j=await r.json();
+    const ad=(j.ads||[])[0];
+    const zone=$('#sponsoredHome');
+    if(!ad){ zone.hidden=true; return; }
+    zone.hidden=false;
+    $('#sponsoredHomeTitle').textContent=ad.title||'';
+    $('#sponsoredHomeSubtitle').textContent=ad.subtitle||'';
+    $('#sponsoredHomeName').textContent=ad.sponsor_name||'';
+    const img=$('#sponsoredHomeImage');
+    if(ad.image_url){ img.src=ad.image_url; img.hidden=false; } else { img.hidden=true; }
+    const link=$('#sponsoredHomeLink');
+    link.href=ad.link_url||'#';
+    link.onclick=()=>trackAdEvent(ad.id,'click','home');
+    trackAdEvent(ad.id,'impression','home');
+  }catch(e){
+    const z=$('#sponsoredHome'); if(z) z.hidden=true;
+  }
+}
+async function trackAdEvent(campaign_id,event_type,placement){
+  try{
+    await fetch('/api/ads/event',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({campaign_id,event_type,placement})
+    });
+  }catch(e){}
+}
+function applyAdRatePreset(){
+  const code=$('#adRateCard').value;
+  const r=(window.__skgAdRates||[]).find(x=>x.code===code);
+  if(!r){
+    $('#adRateHint').textContent='Grille grands comptes : tarifs de base majorés de 20 %.';
+    return;
+  }
+  $('#adPlacement').value=r.placement||'home';
+  $('#adAudience').value=r.audience||'all';
+  $('#adPrice').value=Number(r.recommended_price_cfa||0);
+  $('#adRateHint').textContent=
+    `${r.label} : ${Number(r.min_price_cfa).toLocaleString('fr-FR')} à ${Number(r.max_price_cfa).toLocaleString('fr-FR')} F CFA / ${r.period}. `+
+    `Base conseillée : ${Number(r.recommended_price_cfa).toLocaleString('fr-FR')} F CFA.`;
+}
+
+async function createAdCampaign(){
+  try{
+    await post('/admin/ads',{
+      sponsor_name:$('#adSponsor').value.trim(),
+      title:$('#adTitle').value.trim(),
+      subtitle:$('#adSubtitle').value.trim(),
+      image_url:$('#adImage').value.trim(),
+      link_url:$('#adLink').value.trim(),
+      placement:$('#adPlacement').value,
+      audience:$('#adAudience').value,
+      pricing_model:'fixed_monthly',
+      price_cfa:Number($('#adPrice').value||0),
+      status:'draft'
+    },adminToken);
+    await refreshAdmin();
+    alert('Campagne créée. Activez-la quand le contrat sponsor est validé.');
+  }catch(e){ alert(e.message||'Impossible de créer la campagne'); }
+}
+async function setAdStatus(id,status){
+  try{
+    await post('/admin/ads/'+encodeURIComponent(id)+'/status',{status},adminToken);
+    await refreshAdmin();
+    loadSponsoredHome();
+  }catch(e){ alert(e.message||'Impossible de modifier la campagne'); }
+}
 
 
 applyServiceCategory('village',{scroll:false});
@@ -2925,11 +3055,13 @@ return;
 
 try{
 
-const [rs,s,drivers,audit]=await Promise.all([
+const [rs,s,drivers,audit,ads,adRates]=await Promise.all([
 get('/rides',adminToken),
 get('/stats',adminToken),
 get('/admin/drivers',adminToken),
-get('/admin/audit?limit=50',adminToken)
+get('/admin/audit?limit=50',adminToken),
+get('/admin/ads',adminToken),
+get('/admin/ad-rates',adminToken)
 ]);
 
 $('#stats').innerHTML=
@@ -3012,6 +3144,41 @@ Refuser
 ||
 '<p class="sub">Aucune demande chauffeur.</p>';
 
+
+window.__skgAdRates = adRates || [];
+const rateSelect=$('#adRateCard');
+if(rateSelect){
+  const current=rateSelect.value;
+  rateSelect.innerHTML='<option value="">Choisir une offre grands comptes</option>'+
+    window.__skgAdRates.map(r=>`<option value="${esc(r.code)}">${esc(r.label)}</option>`).join('');
+  if(window.__skgAdRates.some(r=>r.code===current)) rateSelect.value=current;
+}
+$('#adminRateCard').innerHTML=
+`<div class="ad-admin-card">
+  <b>Grille grands comptes SoninkaraGo (+20 %)</b>
+  ${(window.__skgAdRates||[]).map(r=>`
+    <div class="row">
+      <div>
+        <b>${esc(r.label)}</b>
+        <div class="sub">${Number(r.min_price_cfa).toLocaleString('fr-FR')} à ${Number(r.max_price_cfa).toLocaleString('fr-FR')} F CFA / ${esc(r.period)}</div>
+      </div>
+      <div><small>Base conseillée : ${Number(r.recommended_price_cfa).toLocaleString('fr-FR')} F CFA</small></div>
+    </div>
+  `).join('')}
+</div>`;
+
+$('#adminAds').innerHTML=(ads||[]).map(a=>`
+<div class="ad-admin-card">
+  <b>${esc(a.sponsor_name||'')}</b> · ${esc(a.title||'')}
+  <div class="sub">${esc(a.placement||'')} · ${esc(a.audience||'all')} · ${Number(a.price_cfa||0).toLocaleString('fr-FR')} F CFA</div>
+  <div class="sub">${Number(a.impressions||0)} impressions · ${Number(a.clicks||0)} clics · statut ${esc(a.status||'')}</div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+    <button type="button" onclick="setAdStatus('${esc(a.id)}','active')">Activer</button>
+    <button type="button" onclick="setAdStatus('${esc(a.id)}','paused')">Pause</button>
+    <button type="button" onclick="setAdStatus('${esc(a.id)}','ended')">Terminer</button>
+  </div>
+</div>
+`).join('') || '<p class="sub">Aucune campagne créée.</p>';
 
 $('#adminAudit').innerHTML=
 (audit||[]).map(a=>`
