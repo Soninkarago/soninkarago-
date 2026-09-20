@@ -773,31 +773,47 @@ S'inscrire comme chauffeur
 </select>
 
 <h3>Dossier réglementaire chauffeur</h3>
-<p class="sub">Aucun chauffeur ne peut être activé avant vérification manuelle de ces références et de leur validité.</p>
+<p class="sub" id="driverLegalHelp">Les documents demandés dépendent du type de véhicule. SoninkaraGo vérifie uniquement les pièces légalement applicables à votre catégorie avant activation.</p>
 
-<label>Numéro de permis de conduire</label>
-<input id="registerLicenceNumber" autocomplete="off" required>
+<div class="driver-legal-field">
+<label>Numéro de permis de conduire <span class="legal-optional">(si applicable)</span></label>
+<input id="registerLicenceNumber" autocomplete="off">
+</div>
 
-<label>Date d’expiration du permis</label>
-<input id="registerLicenceExpiry" type="date" required>
+<div class="driver-legal-field">
+<label>Date d’expiration du permis <span class="legal-optional">(si applicable)</span></label>
+<input id="registerLicenceExpiry" type="date">
+</div>
 
-<label>Numéro de police d’assurance</label>
-<input id="registerInsuranceNumber" autocomplete="off" required>
+<div class="driver-legal-field">
+<label>Numéro de police d’assurance <span class="legal-optional">(si applicable)</span></label>
+<input id="registerInsuranceNumber" autocomplete="off">
+</div>
 
-<label>Date d’expiration de l’assurance</label>
-<input id="registerInsuranceExpiry" type="date" required>
+<div class="driver-legal-field">
+<label>Date d’expiration de l’assurance <span class="legal-optional">(si applicable)</span></label>
+<input id="registerInsuranceExpiry" type="date">
+</div>
 
-<label>Immatriculation du véhicule</label>
-<input id="registerVehiclePlate" autocomplete="off" required>
+<div class="driver-legal-field">
+<label>Immatriculation / identification du véhicule <span class="legal-optional">(si applicable)</span></label>
+<input id="registerVehiclePlate" autocomplete="off">
+</div>
 
-<label>Numéro de carte grise</label>
-<input id="registerRegistrationCard" autocomplete="off" required>
+<div class="driver-legal-field">
+<label>Numéro de carte grise <span class="legal-optional">(si applicable)</span></label>
+<input id="registerRegistrationCard" autocomplete="off">
+</div>
 
-<label>Date d’expiration de la visite technique</label>
-<input id="registerInspectionExpiry" type="date" required>
+<div class="driver-legal-field">
+<label>Date d’expiration de la visite technique <span class="legal-optional">(si applicable)</span></label>
+<input id="registerInspectionExpiry" type="date">
+</div>
 
-<label>Référence de l’autorisation / licence de transport</label>
-<input id="registerTransportAuthorisation" autocomplete="off" placeholder="Référence administrative" required>
+<div class="driver-legal-field">
+<label>Référence de l’autorisation / licence de transport <span class="legal-optional">(si applicable)</span></label>
+<input id="registerTransportAuthorisation" autocomplete="off" placeholder="Référence administrative si exigée">
+</div>
 
 <label>Choisissez un code PIN</label>
 <input id="registerPin" type="password" inputmode="numeric" maxlength="6">
@@ -806,7 +822,7 @@ S'inscrire comme chauffeur
 <input id="registerPin2" type="password" inputmode="numeric" maxlength="6">
 
 <div class="legal-consent">
-  <label class="checkline"><input type="checkbox" id="driverLegalDocs"><span>Je déclare disposer d’un permis de conduire valide adapté au véhicule, d’une assurance valide, des documents du véhicule et de toute autorisation administrative exigée pour le transport de personnes.</span></label>
+  <label class="checkline"><input type="checkbox" id="driverLegalDocs"><span>Je certifie avoir renseigné les références qui s’appliquent à ma catégorie de véhicule et disposer des documents, assurances, permis ou autorisations légalement exigés pour mon activité. SoninkaraGo pourra demander les justificatifs avant activation.</span></label>
   <label class="checkline"><input type="checkbox" id="driverTerms"><span>J’accepte les <a href="/conditions" target="_blank" rel="noopener">Conditions générales</a> et la <a href="/confidentialite" target="_blank" rel="noopener">Politique de confidentialité</a>.</span></label>
 </div>
 
@@ -2165,6 +2181,34 @@ r.driver_name
 
 /* INSCRIPTION CHAUFFEUR */
 
+
+function updateDriverLegalRequirements(){
+  const vehicle=$('#registerVehicle').value;
+  const strictCar=vehicle==='Voiture taxi';
+  const ids=[
+    'registerLicenceNumber','registerLicenceExpiry','registerInsuranceNumber',
+    'registerInsuranceExpiry','registerVehiclePlate','registerRegistrationCard',
+    'registerInspectionExpiry','registerTransportAuthorisation'
+  ];
+  ids.forEach(id=>{
+    const el=$('#'+id);
+    if(el) el.required=strictCar;
+  });
+  document.querySelectorAll('.legal-optional').forEach(el=>{
+    el.textContent=strictCar?'(obligatoire)':'(si applicable)';
+  });
+  const help=$('#driverLegalHelp');
+  if(help){
+    help.textContent=strictCar
+      ? 'Voiture taxi : le dossier complet est requis avant activation (permis, assurance, véhicule, visite technique et autorisation/licence lorsque exigée).'
+      : 'Moto-taxi / 3 roues : renseignez les références qui sont légalement applicables à votre catégorie et à votre zone. Les pièces non applicables ne bloquent pas l’inscription ; l’activation reste soumise à une vérification manuelle.';
+  }
+}
+$('#registerVehicle').addEventListener('change',updateDriverLegalRequirements);
+updateDriverLegalRequirements();
+
+
+
 $('#showRegisterBtn').onclick=()=>{
 
 $('#driverLogin').classList.add('hidden');
@@ -2188,7 +2232,7 @@ $('#registerDriverBtn').onclick=async()=>{
 
 $('#registerError').textContent='';
 if(!$('#driverLegalDocs').checked){
-  $('#registerError').textContent='Confirmez que vous disposez des documents et autorisations obligatoires.';
+  $('#registerError').textContent='Confirmez que vous avez renseigné les documents applicables à votre catégorie et que vous disposez des autorisations légalement exigées.';
   return;
 }
 if(!$('#driverTerms').checked){
@@ -2229,7 +2273,7 @@ vehicle_plate:$('#registerVehiclePlate').value.trim(),
 registration_card_number:$('#registerRegistrationCard').value.trim(),
 technical_inspection_expiry:$('#registerInspectionExpiry').value,
 transport_authorisation_reference:$('#registerTransportAuthorisation').value.trim(),
-compliance_version:'SN-2026-09-v2'
+compliance_version:'SN-2026-09-v3'
 }
 );
 

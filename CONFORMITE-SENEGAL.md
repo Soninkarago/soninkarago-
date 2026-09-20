@@ -12,7 +12,7 @@ Contact : contact@soninkarago.sn — +221 77 408 33 87
 - Mentions légales renseignées avec RCCM, NINEA, forme juridique, activité, adresse et contact.
 - CGU et politique de confidentialité mises à jour.
 - Consentement CGU/confidentialité et consentement de géolocalisation enregistrés avec version de conformité.
-- Dossier chauffeur renforcé : permis, assurance, immatriculation, carte grise, visite technique et référence d’autorisation/licence.
+- Dossier chauffeur adapté par catégorie : dossier complet pour la voiture taxi ; pour Moto-taxi et 3 roues, seules les pièces légalement applicables à la catégorie et à la zone sont demandées, avec contrôle humain avant activation.
 - Un chauffeur reste en attente tant que son dossier n’est pas marqué vérifié par l’admin.
 - L’API refuse l’approbation d’un chauffeur dont le dossier réglementaire n’a pas été vérifié.
 - Page publique pour l’exercice des droits sur les données.
@@ -34,3 +34,9 @@ Aucune version logicielle ne peut, à elle seule, remplacer une autorisation adm
 - Plus de 15 km à 35 km : 3 000 F CFA.
 - La distance provient de l’itinéraire calculé par le service cartographique ; le tarif est fixé par SoninkaraGo et ne doit pas être présenté comme un tarif officiel/homologué.
 - Exemple de référence : Moudéry → Diawara (~6–7 km) = 2 000 F CFA.
+
+
+## V34 — Documents chauffeurs par catégorie
+- Voiture taxi : dossier réglementaire complet obligatoire avant vérification.
+- Moto-taxi / 3 roues : champs non applicables non bloquants ; toute référence fournie est contrôlée et toute date fournie doit être valide.
+- Aucun chauffeur n'est activé automatiquement : la vérification manuelle de conformité reste obligatoire.

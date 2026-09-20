@@ -2800,7 +2800,7 @@ class App(SimpleHTTPRequestHandler):
             legal_documents_declared = data.get("legal_documents_declared") is True
             terms_accepted = data.get("terms_accepted") is True
             privacy_accepted = data.get("privacy_accepted") is True
-            compliance_version = str(data.get("compliance_version", "SN-2026-09-v2"))[:50]
+            compliance_version = str(data.get("compliance_version", "SN-2026-09-v3"))[:50]
 
             driving_licence_number = str(data.get("driving_licence_number", "")).strip()
             driving_licence_expiry = str(data.get("driving_licence_expiry", "")).strip()
@@ -2816,19 +2816,27 @@ class App(SimpleHTTPRequestHandler):
             if not terms_accepted or not privacy_accepted:
                 return self.sendj({"error": "Acceptation des conditions et de la politique de confidentialité requise."}, 400)
 
-            required_legal = {
-                "numéro de permis": driving_licence_number,
-                "date d’expiration du permis": driving_licence_expiry,
-                "numéro de police d’assurance": insurance_policy_number,
-                "date d’expiration de l’assurance": insurance_expiry,
-                "immatriculation du véhicule": vehicle_plate,
-                "numéro de carte grise": registration_card_number,
-                "date d’expiration de la visite technique": technical_inspection_expiry,
-                "référence de l’autorisation/licence de transport": transport_authorisation_reference,
-            }
-            missing = [label for label, value in required_legal.items() if not value]
-            if missing:
-                return self.sendj({"error": "Dossier chauffeur incomplet : " + ", ".join(missing)}, 400)
+            # Les exigences documentaires dépendent de la catégorie.
+            # Une voiture taxi doit fournir le dossier réglementaire complet.
+            # Pour Moto-taxi / 3 roues, seules les références réellement applicables
+            # à la catégorie et à la zone sont exigées ; l'admin effectue ensuite
+            # la vérification manuelle avant toute activation.
+            strict_legal_profile = vehicle == "Voiture taxi"
+
+            if strict_legal_profile:
+                required_legal = {
+                    "numéro de permis": driving_licence_number,
+                    "date d’expiration du permis": driving_licence_expiry,
+                    "numéro de police d’assurance": insurance_policy_number,
+                    "date d’expiration de l’assurance": insurance_expiry,
+                    "immatriculation du véhicule": vehicle_plate,
+                    "numéro de carte grise": registration_card_number,
+                    "date d’expiration de la visite technique": technical_inspection_expiry,
+                    "référence de l’autorisation/licence de transport": transport_authorisation_reference,
+                }
+                missing = [label for label, value in required_legal.items() if not value]
+                if missing:
+                    return self.sendj({"error": "Dossier voiture taxi incomplet : " + ", ".join(missing)}, 400)
 
             today = time.strftime("%Y-%m-%d")
             for label, value in (
@@ -2836,6 +2844,8 @@ class App(SimpleHTTPRequestHandler):
                 ("assurance", insurance_expiry),
                 ("visite technique", technical_inspection_expiry),
             ):
+                if not value:
+                    continue
                 if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
                     return self.sendj({"error": f"Date invalide pour {label} (AAAA-MM-JJ)."}, 400)
                 if value < today:
@@ -3243,6 +3253,7 @@ class App(SimpleHTTPRequestHandler):
                 row = conn.execute(
                     """
                     SELECT
+                        vehicle,
                         driving_licence_number, driving_licence_expiry,
                         insurance_policy_number, insurance_expiry,
                         vehicle_plate, registration_card_number,
@@ -3255,13 +3266,19 @@ class App(SimpleHTTPRequestHandler):
                 if not row:
                     return self.sendj({"error": "Chauffeur introuvable"}, 404)
 
-                if not all(row.get(k) for k in (
-                    "driving_licence_number","driving_licence_expiry",
-                    "insurance_policy_number","insurance_expiry",
-                    "vehicle_plate","registration_card_number",
-                    "technical_inspection_expiry","transport_authorisation_reference"
-                )):
-                    return self.sendj({"error": "Le dossier réglementaire est incomplet."}, 400)
+                # Pour une voiture taxi, toutes les références prévues par le
+                # profil strict doivent être présentes avant vérification.
+                # Pour Moto-taxi / 3 roues, l'admin vérifie les pièces réellement
+                # applicables à la catégorie et peut valider le dossier sans forcer
+                # des références qui n'existent pas légalement pour cette activité.
+                if row.get("vehicle") == "Voiture taxi":
+                    if not all(row.get(k) for k in (
+                        "driving_licence_number","driving_licence_expiry",
+                        "insurance_policy_number","insurance_expiry",
+                        "vehicle_plate","registration_card_number",
+                        "technical_inspection_expiry","transport_authorisation_reference"
+                    )):
+                        return self.sendj({"error": "Le dossier voiture taxi est incomplet."}, 400)
 
                 conn.execute(
                     """
@@ -3625,7 +3642,7 @@ class App(SimpleHTTPRequestHandler):
                         int(time.time()),
                         int(time.time()),
                         int(time.time()) if data.get("location_consent") is True else None,
-                        str(data.get("compliance_version", "SN-2026-09-v2"))[:50]
+                        str(data.get("compliance_version", "SN-2026-09-v3"))[:50]
                     )
                 )
                 if not mobile_payment:
