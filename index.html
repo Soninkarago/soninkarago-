@@ -927,6 +927,10 @@ Déconnexion
 <h2>Demandes chauffeurs</h2>
 
 <div id="adminDrivers"></div>
+<h3>Journal d’audit</h3>
+<p class="sub">Actions sensibles : vérification chauffeurs, validations, refus et connexions administrateur.</p>
+<div id="adminAudit"></div>
+
 
 </div>
 
@@ -2843,10 +2847,11 @@ return;
 
 try{
 
-const [rs,s,drivers]=await Promise.all([
+const [rs,s,drivers,audit]=await Promise.all([
 get('/rides',adminToken),
 get('/stats',adminToken),
-get('/admin/drivers',adminToken)
+get('/admin/drivers',adminToken),
+get('/admin/audit?limit=50',adminToken)
 ]);
 
 $('#stats').innerHTML=
@@ -2930,6 +2935,17 @@ Refuser
 '<p class="sub">Aucune demande chauffeur.</p>';
 
 
+$('#adminAudit').innerHTML=
+(audit||[]).map(a=>`
+<div class="row">
+<div>
+<b>${esc(a.action||'Action')}</b>
+<div class="sub">${esc(a.actor_role||'')} · ${esc(a.entity_type||'')} ${esc(a.entity_id||'')}</div>
+</div>
+<div><small>${new Date(Number(a.created_at||0)*1000).toLocaleString('fr-FR')}</small></div>
+</div>
+`).join('') || '<p class="sub">Aucun événement sensible enregistré.</p>';
+
 $('#adminRides').innerHTML=
 rs.map(r=>`
 
@@ -2980,11 +2996,12 @@ adminLogout();
 async function verifyDriverDocs(id){
 
 if(!confirm('Confirmez-vous avoir contrôlé les pièces originales ou justificatifs du chauffeur et leur validité ?')) return;
+const notes=prompt('Note de vérification (facultatif) :','')||'';
 
 try{
 await post(
 '/admin/drivers/'+encodeURIComponent(id)+'/verify-docs',
-{},
+{notes,checklist:{identity_checked:true,documents_applicable_checked:true,expiry_dates_checked:true,vehicle_category_checked:true}},
 adminToken
 );
 refreshAdmin();
@@ -3016,11 +3033,12 @@ alert(e.message);
 
 async function rejectDriver(id){
 
+const reason=prompt('Motif du refus (recommandé pour la traçabilité) :','')||'';
 try{
 
 await post(
 '/admin/drivers/'+encodeURIComponent(id)+'/reject',
-{},
+{reason},
 adminToken
 );
 

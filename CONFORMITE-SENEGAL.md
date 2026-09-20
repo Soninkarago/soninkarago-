@@ -40,3 +40,13 @@ Aucune version logicielle ne peut, à elle seule, remplacer une autorisation adm
 - Voiture taxi : dossier réglementaire complet obligatoire avant vérification.
 - Moto-taxi / 3 roues : champs non applicables non bloquants ; toute référence fournie est contrôlée et toute date fournie doit être valide.
 - Aucun chauffeur n'est activé automatiquement : la vérification manuelle de conformité reste obligatoire.
+
+
+## V35 — Durcissement audit / exploitation
+- Journal d’audit append-only pour actions sensibles (connexion admin, vérification/validation/refus chauffeur, suppression de compte).
+- Registre idempotent des callbacks PayTech pour éviter le retraitement d’un même événement.
+- Endpoint de rapprochement administrateur sur 7 jours pour détecter les anomalies de statut de paiement.
+- Journal détaillé des contrôles réglementaires chauffeurs avec checklist, note, décision et horodatage.
+- Health/readiness enrichi avec base de données, configuration cartographie/paiement et objectifs RPO/RTO.
+- Runbook de sauvegarde/restauration et de gestion d’incident ajouté.
+- L’authentification administrateur existante reste volontairement inchangée dans cette version, conformément à la décision du responsable.

@@ -14,6 +14,8 @@ import secrets
 import mimetypes
 import threading
 import math
+import uuid
+import socket
 from http.cookies import SimpleCookie
 from collections import defaultdict, deque
 import psycopg
@@ -37,7 +39,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.09.18-v20-live-eta"
+APP_VERSION = "2026.09.20-v35-enterprise-hardening"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -47,6 +49,12 @@ RATE_LIMITS = defaultdict(deque)
 RATE_LIMIT_LOCK = threading.Lock()
 SESSION_COOKIE_NAME = "skg_session"
 SESSION_TTL_SECONDS = 12 * 60 * 60
+
+AUDIT_RETENTION_DAYS = int(os.environ.get("AUDIT_RETENTION_DAYS", "365"))
+SECURITY_LOG_RETENTION_DAYS = int(os.environ.get("SECURITY_LOG_RETENTION_DAYS", "365"))
+BACKUP_RPO_HOURS = int(os.environ.get("BACKUP_RPO_HOURS", "24"))
+BACKUP_RTO_HOURS = int(os.environ.get("BACKUP_RTO_HOURS", "4"))
+INSTANCE_ID = os.environ.get("RENDER_INSTANCE_ID", "") or socket.gethostname()
 
 
 def allow_request(key, limit, window_seconds):
@@ -104,6 +112,81 @@ def allow_request_shared(key, limit, window_seconds):
         return allow_request(key, limit, window_seconds)
 
 
+
+
+def safe_json(value):
+    try:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    except Exception:
+        return json.dumps({"unserializable": True})
+
+
+def audit_event(conn, actor_role, actor_id, action, entity_type="", entity_id="", details=None, outcome="success"):
+    """Append-only audit trail for sensitive business/security actions."""
+    try:
+        conn.execute(
+            """
+            INSERT INTO audit_events(
+                id, actor_role, actor_id, action, entity_type, entity_id,
+                details_json, outcome, created_at, instance_id
+            )
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                uuid.uuid4().hex,
+                str(actor_role or "")[:50],
+                str(actor_id or "")[:120],
+                str(action or "")[:120],
+                str(entity_type or "")[:80],
+                str(entity_id or "")[:160],
+                safe_json(details or {}),
+                str(outcome or "success")[:30],
+                int(time.time()),
+                INSTANCE_ID[:120],
+            )
+        )
+    except Exception as exc:
+        # Audit logging must never expose sensitive details in HTTP responses.
+        print("audit_event error:", repr(exc))
+
+
+def payment_event_once(conn, provider, event_key, reference, event_type, amount, payload_summary):
+    """Idempotency register for payment callbacks. Returns True only on first processing."""
+    try:
+        row = conn.execute(
+            """
+            INSERT INTO payment_events(
+                id, provider, event_key, reference, event_type, amount,
+                payload_summary, created_at
+            )
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT(provider,event_key) DO NOTHING
+            RETURNING id
+            """,
+            (
+                uuid.uuid4().hex,
+                provider[:40],
+                event_key[:160],
+                reference[:160],
+                event_type[:80],
+                int(amount or 0),
+                safe_json(payload_summary or {}),
+                int(time.time()),
+            )
+        ).fetchone()
+        return bool(row)
+    except Exception as exc:
+        print("payment_event_once error:", repr(exc))
+        # Existing state checks still protect against duplicate balance changes.
+        return True
+
+
+def purge_old_operational_logs(conn):
+    now = int(time.time())
+    audit_cutoff = now - max(30, AUDIT_RETENTION_DAYS) * 86400
+    security_cutoff = now - max(30, SECURITY_LOG_RETENTION_DAYS) * 86400
+    conn.execute("DELETE FROM audit_events WHERE created_at < %s", (audit_cutoff,))
+    conn.execute("DELETE FROM payment_events WHERE created_at < %s", (security_cutoff,))
 
 
 URBAN_CAR_ZONES = {
@@ -1292,6 +1375,73 @@ def init():
             CREATE INDEX IF NOT EXISTS idx_request_rate_limits_updated
             ON request_rate_limits(updated_at)
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_events(
+                id TEXT PRIMARY KEY,
+                actor_role TEXT NOT NULL,
+                actor_id TEXT,
+                action TEXT NOT NULL,
+                entity_type TEXT,
+                entity_id TEXT,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                outcome TEXT NOT NULL DEFAULT 'success',
+                created_at BIGINT NOT NULL,
+                instance_id TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_audit_events_created
+            ON audit_events(created_at DESC)
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_audit_events_entity
+            ON audit_events(entity_type, entity_id, created_at DESC)
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS payment_events(
+                id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                event_key TEXT NOT NULL,
+                reference TEXT,
+                event_type TEXT,
+                amount INTEGER NOT NULL DEFAULT 0,
+                payload_summary TEXT NOT NULL DEFAULT '{}',
+                created_at BIGINT NOT NULL,
+                UNIQUE(provider,event_key)
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_payment_events_reference
+            ON payment_events(reference, created_at DESC)
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS driver_compliance_checks(
+                id TEXT PRIMARY KEY,
+                driver_id TEXT NOT NULL REFERENCES drivers(id) ON DELETE CASCADE,
+                reviewer_role TEXT NOT NULL,
+                checklist_json TEXT NOT NULL DEFAULT '{}',
+                notes TEXT NOT NULL DEFAULT '',
+                decision TEXT NOT NULL,
+                created_at BIGINT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_driver_compliance_checks_driver
+            ON driver_compliance_checks(driver_id, created_at DESC)
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS operational_incidents(
+                id TEXT PRIMARY KEY,
+                severity TEXT NOT NULL,
+                category TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                opened_at BIGINT NOT NULL,
+                closed_at BIGINT,
+                resolution TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        purge_old_operational_logs(conn)
 
         conn.execute("""
             ALTER TABLE rides
@@ -1862,20 +2012,37 @@ class App(SimpleHTTPRequestHandler):
                 self.json_response(503, {"error": "Service de localisation temporairement indisponible."})
             return
 
-        if path == "/api/health":
+        if path in ("/api/health", "/api/ready"):
+            checks = {
+                "database": "unknown",
+                "paytech_configured": bool(PAYTECH_API_KEY and PAYTECH_API_SECRET),
+                "maps_configured": bool(MAPS_API_KEY),
+                "auth_secret_configured": bool(AUTH_SECRET),
+            }
             try:
+                started = time.time()
                 with db() as conn:
                     conn.execute("SELECT 1").fetchone()
+                checks["database"] = "ok"
+                checks["database_latency_ms"] = int((time.time() - started) * 1000)
             except psycopg.Error:
+                checks["database"] = "unavailable"
                 return self.sendj({
                     "ok": False,
-                    "database": "unavailable",
-                    "version": APP_VERSION
+                    "service": "SoninkaraGo",
+                    "version": APP_VERSION,
+                    "checks": checks
                 }, 503)
             return self.sendj({
                 "ok": True,
                 "service": "SoninkaraGo",
-                "version": APP_VERSION
+                "version": APP_VERSION,
+                "instance": INSTANCE_ID,
+                "checks": checks,
+                "recovery_objectives": {
+                    "rpo_hours": BACKUP_RPO_HOURS,
+                    "rto_hours": BACKUP_RTO_HOURS
+                }
             })
 
         # Client : suivi de sa course
@@ -2138,6 +2305,29 @@ class App(SimpleHTTPRequestHandler):
 
 
         # Liste des chauffeurs pour Admin
+        if path == "/api/admin/audit":
+            user = self.auth()
+            if not user or user.get("role") != "admin":
+                return self.sendj({"error": "Non autorisé"}, 401)
+            try:
+                params = parse_qs(parsed.query)
+                limit = min(200, max(1, int((params.get("limit") or ["100"])[0])))
+            except Exception:
+                limit = 100
+            with db() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT actor_role,actor_id,action,entity_type,entity_id,
+                           details_json,outcome,created_at
+                    FROM audit_events
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,)
+                ).fetchall()
+            return self.sendj(rows)
+
+
         if path == "/api/admin/drivers":
             user = self.auth()
 
@@ -3189,6 +3379,8 @@ class App(SimpleHTTPRequestHandler):
                     """,
                     (driver_id,)
                 )
+                audit_event(conn, "driver", driver_id, "driver.account.delete", "driver", driver_id,
+                            {"phone_hash": hashlib.sha256(str(driver.get("phone","")).encode()).hexdigest()[:16]})
                 conn.execute(
                     "DELETE FROM drivers WHERE id=%s",
                     (driver_id,)
@@ -3220,6 +3412,13 @@ class App(SimpleHTTPRequestHandler):
                     ADMIN_PASSWORD
                 )
             ):
+                try:
+                    with db() as conn:
+                        audit_event(conn, "anonymous", "", "admin.login", "admin", "Admin",
+                                    {"user_agent": str(self.headers.get("User-Agent",""))[:240]},
+                                    outcome="denied")
+                except Exception:
+                    pass
                 return self.sendj(
                     {
                         "error":
@@ -3227,6 +3426,13 @@ class App(SimpleHTTPRequestHandler):
                     },
                     401
                 )
+
+            try:
+                with db() as conn:
+                    audit_event(conn, "admin", "Admin", "admin.login", "admin", "Admin",
+                                {"user_agent": str(self.headers.get("User-Agent",""))[:240]})
+            except Exception:
+                pass
 
             token = make_token("admin", "Admin")
             response = {"authenticated": True, "name": "Admin"}
@@ -3236,6 +3442,49 @@ class App(SimpleHTTPRequestHandler):
                 response,
                 extra_headers=[("Set-Cookie", session_cookie(token))]
             )
+
+
+        if path == "/api/admin/payments/reconciliation":
+            user = self.auth()
+            if not user or user.get("role") != "admin":
+                return self.sendj({"error": "Non autorisé"}, 401)
+            with db() as conn:
+                rides = conn.execute(
+                    """
+                    SELECT id,fare,deposit_amount,balance_due,payment_status,status,
+                           deposit_paid_at,balance_paid_at,created_at
+                    FROM rides
+                    WHERE created_at >= %s
+                    ORDER BY created_at DESC
+                    LIMIT 500
+                    """,
+                    (int(time.time()) - 7*86400,)
+                ).fetchall()
+                recharges = conn.execute(
+                    """
+                    SELECT id,driver_id,amount,status,created_at,paid_at
+                    FROM driver_recharges
+                    WHERE created_at >= %s
+                    ORDER BY created_at DESC
+                    LIMIT 500
+                    """,
+                    (int(time.time()) - 7*86400,)
+                ).fetchall()
+            anomalies = []
+            for r in rides:
+                if r.get("payment_status") in ("deposit_paid","fully_paid") and not r.get("deposit_paid_at"):
+                    anomalies.append({"type":"ride_missing_paid_timestamp","id":r["id"]})
+                if r.get("status") == "searching" and r.get("payment_status") == "unpaid":
+                    anomalies.append({"type":"ride_searching_unpaid","id":r["id"]})
+            for x in recharges:
+                if x.get("status") == "paid" and not x.get("paid_at"):
+                    anomalies.append({"type":"recharge_missing_paid_timestamp","id":x["id"]})
+            return self.sendj({
+                "window_days": 7,
+                "rides_count": len(rides),
+                "recharges_count": len(recharges),
+                "anomalies": anomalies
+            })
 
 
         # ADMIN VERIFIE LE DOSSIER REGLEMENTAIRE DU CHAUFFEUR
@@ -3280,14 +3529,32 @@ class App(SimpleHTTPRequestHandler):
                     )):
                         return self.sendj({"error": "Le dossier voiture taxi est incomplet."}, 400)
 
+                notes = str(data.get("notes", ""))[:1500]
+                checklist = data.get("checklist") or {
+                    "identity_checked": True,
+                    "documents_applicable_checked": True,
+                    "expiry_dates_checked": True,
+                    "vehicle_category_checked": True,
+                }
+                now = int(time.time())
                 conn.execute(
                     """
                     UPDATE drivers
                     SET compliance_verified=TRUE, compliance_verified_at=%s
                     WHERE id=%s
                     """,
-                    (int(time.time()), driver_id)
+                    (now, driver_id)
                 )
+                conn.execute(
+                    """
+                    INSERT INTO driver_compliance_checks(
+                        id,driver_id,reviewer_role,checklist_json,notes,decision,created_at
+                    ) VALUES(%s,%s,%s,%s,%s,%s,%s)
+                    """,
+                    (uuid.uuid4().hex, driver_id, "admin", safe_json(checklist), notes, "verified", now)
+                )
+                audit_event(conn, "admin", "Admin", "driver.compliance.verify",
+                            "driver", driver_id, {"vehicle": row.get("vehicle"), "notes": notes})
 
             return self.sendj({"ok": True, "compliance_verified": True})
 
@@ -3341,6 +3608,8 @@ class App(SimpleHTTPRequestHandler):
                     404
                 )
 
+            with db() as conn:
+                audit_event(conn, "admin", "Admin", "driver.approve", "driver", driver_id, {})
             return self.sendj({
                 "ok": True,
                 "status": "approved"
@@ -3366,6 +3635,7 @@ class App(SimpleHTTPRequestHandler):
 
             driver_id = path.split("/")[4]
 
+            reason = str(data.get("reason", "")).strip()[:1000]
             with db() as conn:
                 cur = conn.execute(
                     """
@@ -3375,6 +3645,17 @@ class App(SimpleHTTPRequestHandler):
                     """,
                     (driver_id,)
                 )
+                if cur.rowcount:
+                    conn.execute(
+                        """
+                        INSERT INTO driver_compliance_checks(
+                            id,driver_id,reviewer_role,checklist_json,notes,decision,created_at
+                        ) VALUES(%s,%s,%s,%s,%s,%s,%s)
+                        """,
+                        (uuid.uuid4().hex, driver_id, "admin", "{}", reason, "rejected", int(time.time()))
+                    )
+                    audit_event(conn, "admin", "Admin", "driver.reject", "driver", driver_id,
+                                {"reason": reason})
 
             if not cur.rowcount:
                 return self.sendj(

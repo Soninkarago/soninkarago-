@@ -1,2 +1,2 @@
-psycopg[binary]
-phonenumbers==9.0.12
+psycopg[binary]>=3.2,<4
+phonenumbers>=8.13,<9
