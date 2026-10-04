@@ -16,6 +16,9 @@ import threading
 import math
 import uuid
 import socket
+import smtplib
+import ssl
+from email.message import EmailMessage
 from http.cookies import SimpleCookie
 from collections import defaultdict, deque
 import psycopg
@@ -55,6 +58,59 @@ SECURITY_LOG_RETENTION_DAYS = int(os.environ.get("SECURITY_LOG_RETENTION_DAYS", 
 BACKUP_RPO_HOURS = int(os.environ.get("BACKUP_RPO_HOURS", "24"))
 BACKUP_RTO_HOURS = int(os.environ.get("BACKUP_RTO_HOURS", "4"))
 INSTANCE_ID = os.environ.get("RENDER_INSTANCE_ID", "") or socket.gethostname()
+
+
+CONTACT_TOPICS = {"thanks": "Remerciement", "suggestion": "Suggestion", "question": "Question", "partnership": "Partenariat"}
+
+
+def validate_contact(data):
+    fields = {key: data.get(key, "") for key in ("name", "email", "topic", "message", "website")}
+    if not all(isinstance(value, str) for value in fields.values()):
+        raise ValueError("Les champs doivent contenir du texte.")
+    if fields["website"]:
+        raise ValueError("Message non accepté.")
+    fields = {key: value.strip() for key, value in fields.items()}
+    if not 1 <= len(fields["name"]) <= 120 or any(c in fields["name"] for c in "\r\n\x00"):
+        raise ValueError("Indiquez votre nom (120 caractères maximum).")
+    email = fields["email"]
+    if len(email) > 254 or not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+", email):
+        raise ValueError("Indiquez une adresse e-mail valide.")
+    if fields["topic"] not in CONTACT_TOPICS:
+        raise ValueError("Choisissez un objet dans la liste.")
+    if not 1 <= len(fields["message"]) <= 5000 or "\x00" in fields["message"]:
+        raise ValueError("Votre message doit contenir entre 1 et 5 000 caractères.")
+    return fields
+
+
+def deliver_contact(fields):
+    # Credentials stay in server environment, never in HTML or Git.
+    host = os.environ.get("CONTACT_SMTP_HOST", "").strip()
+    user = os.environ.get("CONTACT_SMTP_USER", "").strip()
+    password = os.environ.get("CONTACT_SMTP_PASSWORD", "")
+    sender = os.environ.get("CONTACT_SMTP_FROM", user).strip()
+    mode = os.environ.get("CONTACT_SMTP_SECURITY", "ssl").lower()
+    if not host or not user or not password or not sender or mode not in ("ssl", "starttls"):
+        raise RuntimeError("Contact email is not configured")
+    port = int(os.environ.get("CONTACT_SMTP_PORT", "465" if mode == "ssl" else "587"))
+    message = EmailMessage()
+    message["From"] = sender
+    message["To"] = "contact@soninkarago.sn"
+    message["Reply-To"] = fields["email"]
+    message["Subject"] = "SoninkaraGo — " + CONTACT_TOPICS[fields["topic"]]
+    message.set_content("Nom : " + fields["name"] + "\nE-mail : " + fields["email"] + "\nObjet : " + CONTACT_TOPICS[fields["topic"]] + "\n\n" + fields["message"])
+    context = ssl.create_default_context()
+    client_class = smtplib.SMTP_SSL if mode == "ssl" else smtplib.SMTP
+    kwargs = {"timeout": 15}
+    if mode == "ssl":
+        kwargs["context"] = context
+    with client_class(host, port, **kwargs) as client:
+        if mode == "starttls":
+            client.ehlo()
+            client.starttls(context=context)
+            client.ehlo()
+        client.login(user, password)
+        if client.send_message(message):
+            raise RuntimeError("Contact recipient rejected")
 
 
 def allow_request(key, limit, window_seconds):
@@ -2655,6 +2711,19 @@ class App(SimpleHTTPRequestHandler):
             return
         if path != "/api/paytech/ipn" and not self.same_origin_request():
             return
+        if path == "/api/contact":
+            if not self.check_rate("contact", 5, 3600):
+                return
+            try:
+                fields = validate_contact(data)
+            except ValueError as exc:
+                return self.sendj({"error": str(exc)}, 400)
+            try:
+                deliver_contact(fields)
+            except Exception:
+                # Do not expose credentials, server errors or message contents.
+                return self.sendj({"error": "L’envoi est momentanément indisponible. Votre message n’a pas été confirmé. Vous pouvez écrire directement à contact@soninkarago.sn."}, 503)
+            return self.sendj({"ok": True, "message": "Merci ! Votre message a été transmis à notre messagerie."})
         if path == "/api/push/subscribe":
             if not self.check_rate("push-subscribe", 10, 3600):
                 return
