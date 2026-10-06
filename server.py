@@ -1,5 +1,5 @@
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, urlencode
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 import json
@@ -42,7 +42,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.09.20-v38-enterprise-ad-rate-card"
+APP_VERSION = "2026.10.06-v39-mobile-preflight"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -493,7 +493,7 @@ def reverse_geocode_senegal(lat, lng):
         raise ValueError("Coordonnées GPS invalides.")
     if not (12.0 <= lat <= 17.5 and -18.5 <= lng <= -11.0):
         raise ValueError("Cette position ne semble pas être au Sénégal.")
-    key = google_maps_api_key()
+    key = MAPS_API_KEY
     if not key:
         raise RuntimeError("Service de localisation temporairement indisponible.")
     params = {
@@ -503,7 +503,11 @@ def reverse_geocode_senegal(lat, lng):
         "key": key,
     }
     url = "https://maps.googleapis.com/maps/api/geocode/json?" + urlencode(params)
-    data = http_json(url, timeout=8)
+    try:
+        with urlopen(url, timeout=8) as response:
+            data = json.load(response)
+    except (URLError, TimeoutError, ValueError) as exc:
+        raise RuntimeError("Service de localisation temporairement indisponible.") from exc
     if data.get("status") != "OK" or not data.get("results"):
         raise ValueError("Impossible d’identifier précisément votre position.")
     result = data["results"][0]
@@ -741,7 +745,9 @@ def local_quote(service_code, pickup, destination):
         if lat is None or lng is None or not (12.0 <= float(lat) <= 17.5 and -18.5 <= float(lng) <= -11.0):
             raise ValueError("Le départ et la destination doivent se trouver au Sénégal.")
 
-    travel_mode = "TWO_WHEELER" if service_code == "local_moto" else "DRIVE"
+    # Google Routes does not support TWO_WHEELER in Senegal. Use the road
+    # network for the estimate; service identity and moto fares stay unchanged.
+    travel_mode = "DRIVE"
     payload = {
         "origin": {"location": {"latLng": {"latitude": origin["lat"], "longitude": origin["lng"]}}},
         "destination": {"location": {"latLng": {"latitude": arrival["lat"], "longitude": arrival["lng"]}}},
@@ -816,7 +822,7 @@ def compute_live_eta(driver_lat, driver_lng, client_lat, client_lng, vehicle="Vo
     except (TypeError, ValueError):
         return None
 
-    travel_mode = "TWO_WHEELER" if vehicle == "Moto-taxi" else "DRIVE"
+    travel_mode = "DRIVE"  # TWO_WHEELER is unavailable in Senegal.
     payload = {
         "origin": {"location": {"latLng": {"latitude": dlat, "longitude": dlng}}},
         "destination": {"location": {"latLng": {"latitude": clat, "longitude": clng}}},
@@ -2129,7 +2135,8 @@ class App(SimpleHTTPRequestHandler):
 
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
 
         if path == "/api/push/public-key":
             return self.sendj({"public_key": VAPID_PUBLIC_KEY, "configured": bool(VAPID_PUBLIC_KEY)})
@@ -2172,12 +2179,12 @@ class App(SimpleHTTPRequestHandler):
                 params = parse_qs(parsed.query)
                 lat = (params.get("lat") or [""])[0]
                 lng = (params.get("lng") or [""])[0]
-                self.json_response(200, reverse_geocode_senegal(lat, lng))
+                self.sendj(reverse_geocode_senegal(lat, lng))
             except ValueError as exc:
-                self.json_response(400, {"error": str(exc)})
+                self.sendj({"error": str(exc)}, 400)
             except Exception as exc:
                 print("reverse geocode error:", repr(exc))
-                self.json_response(503, {"error": "Service de localisation temporairement indisponible."})
+                self.sendj({"error": "Service de localisation temporairement indisponible."}, 503)
             return
 
         if path == "/api/ads":
@@ -2368,6 +2375,8 @@ class App(SimpleHTTPRequestHandler):
                     else ""
                 ),
                 "driver_location_at": row.get("driver_location_at"),
+                "client_lat": row.get("client_lat"),
+                "client_lng": row.get("client_lng"),
                 "eta_seconds": eta_seconds,
                 "eta_distance_meters": eta_distance_meters,
                 "eta_calculated_at": eta_calculated_at,
@@ -2423,7 +2432,19 @@ class App(SimpleHTTPRequestHandler):
                             status,
                             driver_name,
                             created_at,
-                            offer_expires_at
+                            offer_expires_at,
+                            payment_status,
+                            commission_charged,
+                            deposit_amount,
+                            balance_due,
+                            departure_date,
+                            departure_time,
+                            meeting_point,
+                            passenger_count,
+                            luggage,
+                            booking_note,
+                            client_lat,
+                            client_lng
                         FROM rides
                         WHERE
                             (
@@ -2442,7 +2463,7 @@ class App(SimpleHTTPRequestHandler):
                                 )
                             )
                             OR (
-                                status='accepted'
+                                status IN ('accepted', 'arriving', 'in_progress', 'deposit_paid', 'fully_paid')
                                 AND driver_id=%s
                             )
                         ORDER BY created_at DESC
@@ -2473,7 +2494,7 @@ class App(SimpleHTTPRequestHandler):
             with db() as conn:
                 driver = conn.execute(
                     """
-                    SELECT balance
+                    SELECT balance, name, vehicle, village, online, status
                     FROM drivers
                     WHERE id=%s
                     """,
@@ -2486,8 +2507,14 @@ class App(SimpleHTTPRequestHandler):
                     404
                 )
 
+            if driver["status"] != "approved":
+                return self.sendj({"error": "Compte chauffeur inactif"}, 403)
             return self.sendj({
-                "balance": int(driver["balance"] or 0)
+                "balance": int(driver["balance"] or 0),
+                "name": driver["name"],
+                "vehicle": driver["vehicle"],
+                "village": driver["village"],
+                "online": bool(driver["online"])
             })
 
         # Statistiques Admin
@@ -3582,7 +3609,7 @@ class App(SimpleHTTPRequestHandler):
                     """
                     SELECT COUNT(*) AS n
                     FROM rides
-                    WHERE driver_id=%s AND status='accepted'
+                    WHERE driver_id=%s AND status IN ('accepted', 'arriving', 'in_progress', 'deposit_paid', 'fully_paid')
                     """,
                     (driver_id,)
                 ).fetchone()
@@ -4041,7 +4068,7 @@ class App(SimpleHTTPRequestHandler):
                 data.get("client_lat"),
                 data.get("client_lng")
             )
-            if urban_ride:
+            if urban_ride or local_ride:
                 # Le départ géocodé du trajet détermine l'attribution.
                 client_coords = (quote["lat"], quote["lng"])
             if not is_minicar and not client_coords:
@@ -4188,10 +4215,10 @@ class App(SimpleHTTPRequestHandler):
                             "UPDATE rides SET status='payment_failed', payment_status='failed' WHERE id=%s",
                             (ride_id,)
                         )
-                    return self.sendj({
-                        "error": str(exc),
-                        "ride_id": ride_id
-                    }, 502)
+                    # The reservation already exists. Return its tracking token
+                    # so the mobile client can recover/cancel rather than duplicate it.
+                    response.update(status="payment_failed", payment_status="failed", payment_error=str(exc))
+                    return self.sendj(response, 201)
 
             return self.sendj(response, 201)
 
@@ -4613,7 +4640,7 @@ class App(SimpleHTTPRequestHandler):
                           OR
                           (
                               vehicle<>'Minicar 14 places'
-                              AND status='accepted'
+                              AND status IN ('accepted', 'arriving', 'in_progress')
                           )
                       )
                     """,
@@ -4845,7 +4872,7 @@ class App(SimpleHTTPRequestHandler):
                         403
                     )
 
-                if ride["status"] != "accepted":
+                if ride["status"] not in ("accepted", "arriving", "in_progress", "deposit_paid", "fully_paid"):
                     return self.sendj(
                         {"error": "Course non active"},
                         409
