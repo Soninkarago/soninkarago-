@@ -43,7 +43,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v45-local-territory"
+APP_VERSION = "2026.10.07-v47-local-reference-26km"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -692,7 +692,7 @@ def local_route_fare(service_code, km, pickup, destination):
         if service_code in agreed:
             return agreed[service_code]
     if places == {"Moudéry", "Bondji"}:
-        agreed = {"local_moto": 2000}
+        agreed = {"local_moto": 2000, "local_taxi": 5000}
         if service_code in agreed:
             return agreed[service_code]
     return local_fare(service_code, km)
@@ -719,9 +719,10 @@ LOCAL_SERVICE_CONFIG = {
 }
 
 
-# Road distance measured by the live Google Routes quote on 2026-10-07.
-# Issa's agreed reference: Moudéry–Bakel, moto 3000 F / entire taxi 10000 F.
-LOCAL_REFERENCE_KM = 39.4
+# Commercial reference explicitly confirmed by Issa on 2026-10-07:
+# Moudéri–Bakel 26 km, moto 3000 F / entire taxi 10000 F.
+# Keep Google's measured routing distance separate from this fare reference.
+LOCAL_REFERENCE_KM = 26.0
 
 
 def local_fare(service_code, km):

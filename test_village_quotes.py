@@ -46,11 +46,11 @@ class VillageQuotes(unittest.TestCase):
             self.assertEqual(quote['fare'],fare)
 
     def test_all_localities_use_distance_prices(self):
-        for service, fare in [('local_moto',7700),('local_taxi',25400)]:
+        for service, fare in [('local_moto',11600),('local_taxi',38500)]:
             quote, _ = self.quote(service,'Village A','Village B',km=100)
             self.assertEqual(quote['fare'],fare)
             self.assertEqual(quote['distance_km'],100)
-            prices = [server.local_fare(service,km) for km in [15,17,35,39.4,50,100]]
+            prices = [server.local_fare(service,km) for km in [15,17,26,35,50,100]]
             self.assertEqual(prices,sorted(prices))
         with self.assertRaises(ValueError):
             self.quote('local_tricycle',km=36)
