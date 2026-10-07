@@ -44,7 +44,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v51-classic-minimum"
+APP_VERSION = "2026.10.07-v52-mobile-addresses"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -446,54 +446,62 @@ def urban_zone_bounds(zone_code):
     return f"{lat-delta_lat},{lng-delta_lng}|{lat+delta_lat},{lng+delta_lng}"
 
 
-def geocode_senegal(query, bias_zone=None):
-    """Géocodage Sénégal, éventuellement biaisé vers la zone de départ."""
+def search_senegal_places(query, bias_zone=None):
+    """Return bounded, country-checked Google geocoding candidates, never the API key."""
     from urllib.parse import urlencode
     address = str(query or "").strip()[:180]
     if len(address) < 3:
-        raise ValueError("Indiquez une rue, un quartier, un commerce ou un lieu précis.")
-
-    params = {
-        "address": f"{address}, Sénégal",
-        "components": "country:SN",
-        "key": MAPS_API_KEY,
-        "language": "fr",
-        "region": "sn",
-    }
-    if bias_zone:
-        bounds = urban_zone_bounds(bias_zone)
-        if bounds:
-            params["bounds"] = bounds
-
-    url = "https://maps.googleapis.com/maps/api/geocode/json?" + urlencode(params)
+        raise ValueError("Indiquez une rue, un quartier ou un lieu et sa localité.")
+    if not MAPS_API_KEY:
+        raise RuntimeError("Recherche d’adresse momentanément indisponible.")
+    params = {"key": MAPS_API_KEY, "language": "fr", "region": "sn"}
+    if address.startswith("place_id:"):
+        place_id = address[9:]
+        if not re.fullmatch(r"[A-Za-z0-9_-]{5,170}", place_id):
+            raise ValueError("Lieu sélectionné invalide. Recherchez à nouveau l’adresse.")
+        params["place_id"] = place_id
+    else:
+        params.update(address=f"{address}, Sénégal", components="country:SN")
+        if bias_zone:
+            bounds = urban_zone_bounds(bias_zone)
+            if bounds:
+                params["bounds"] = bounds
     try:
-        with urlopen(url, timeout=10) as response:
+        with urlopen("https://maps.googleapis.com/maps/api/geocode/json?" + urlencode(params), timeout=10) as response:
             result = json.load(response)
     except (URLError, TimeoutError) as exc:
-        raise RuntimeError("Recherche d'adresse momentanément indisponible.") from exc
+        raise RuntimeError("Recherche d’adresse momentanément indisponible.") from exc
+    if result.get("status") == "ZERO_RESULTS":
+        return []
+    if result.get("status") != "OK":
+        raise RuntimeError("Recherche d’adresse momentanément indisponible.")
+    candidates = []
+    for place in result.get("results", [])[:10]:
+        countries = [c.get("short_name") for c in place.get("address_components", []) if "country" in c.get("types", [])]
+        coords = place.get("geometry", {}).get("location", {})
+        lat, lng = coords.get("lat"), coords.get("lng")
+        if "SN" not in countries or not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
+            continue
+        if not (12 <= lat <= 17.5 and -18.5 <= lng <= -11):
+            continue
+        if not place.get("place_id") or not place.get("formatted_address"):
+            continue
+        candidates.append({"address": place["formatted_address"][:200], "lat": lat, "lng": lng,
+                           "place_id": place["place_id"], "approximate": bool(place.get("partial_match")),
+                           "tariff_place": local_place_name(place["formatted_address"].split(",")[0])
+                           if "locality" in place.get("types", []) else ""})
+    return candidates[:5]
 
-    if result.get("status") != "OK" or not result.get("results"):
-        raise ValueError("Lieu introuvable. Vérifiez le nom de la rue, du quartier ou du lieu.")
 
-    # Si on a un biais de ville, privilégier un résultat dans cette zone.
+def geocode_senegal(query, bias_zone=None):
+    candidates = search_senegal_places(query, bias_zone)
+    if not candidates:
+        raise ValueError("Lieu introuvable au Sénégal. Précisez la rue, le quartier et la localité.")
     if bias_zone:
-        for place in result["results"]:
-            coords = place.get("geometry", {}).get("location", {})
-            lat, lng = coords.get("lat"), coords.get("lng")
-            if in_urban_service_zone(bias_zone, lat, lng):
-                return {
-                    "address": place["formatted_address"][:200],
-                    "lat": lat,
-                    "lng": lng,
-                }
-
-    place = result["results"][0]
-    coords = place.get("geometry", {}).get("location", {})
-    return {
-        "address": place["formatted_address"][:200],
-        "lat": coords.get("lat"),
-        "lng": coords.get("lng"),
-    }
+        for place in candidates:
+            if in_urban_service_zone(bias_zone, place["lat"], place["lng"]):
+                return place
+    return candidates[0]
 
 
 
@@ -874,6 +882,8 @@ def local_quote(service_code, pickup, destination):
 
     origin = geocode_senegal(local_place_name(pickup))
     arrival = geocode_senegal(local_place_name(destination))
+    fare_pickup = (origin.get("tariff_place") or origin["address"]) if str(pickup).startswith("place_id:") else pickup
+    fare_destination = (arrival.get("tariff_place") or arrival["address"]) if str(destination).startswith("place_id:") else destination
     for point in (origin, arrival):
         lat, lng = point.get("lat"), point.get("lng")
         if lat is None or lng is None or not (12.0 <= float(lat) <= 17.5 and -18.5 <= float(lng) <= -11.0):
@@ -890,7 +900,7 @@ def local_quote(service_code, pickup, destination):
     }
     if travel_mode == "DRIVE":
         payload["routingPreference"] = "TRAFFIC_AWARE"
-    if {local_place_name(pickup), local_place_name(destination)} == {"Moudéry", "Bakel"}:
+    if {local_place_name(fare_pickup), local_place_name(fare_destination)} == {"Moudéry", "Bakel"}:
         # The local road through Diawara is 25.9 km; automatic fastest routing
         # otherwise takes the 39.4 km N2 detour. Use the verified local road
         # in both directions and let Google compute its distance and duration.
@@ -929,7 +939,7 @@ def local_quote(service_code, pickup, destination):
         pickup_place = reverse_geocode_senegal(origin["lat"], origin["lng"])
     except (ValueError, RuntimeError):
         pickup_place = {}
-    fare = local_route_fare(service_code, km, pickup, destination)
+    fare = local_route_fare(service_code, km, fare_pickup, fare_destination)
     quote = {
         "service_code": service_code,
         "service": config["service"],
@@ -2409,6 +2419,17 @@ class App(SimpleHTTPRequestHandler):
             return self.serve_static(static_pages[path], cache_seconds)
         if path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico")):
             return self.serve_static(path.lstrip("/"), 86400)
+        if path == "/api/location/search":
+            if not self.check_rate("location-search", 30, 60):
+                return
+            try:
+                query = (parse_qs(parsed.query).get("q") or [""])[0]
+                self.sendj({"results": search_senegal_places(query)})
+            except ValueError as exc:
+                self.sendj({"error": str(exc)}, 400)
+            except Exception:
+                self.sendj({"error": "Recherche d’adresse momentanément indisponible."}, 503)
+            return
         if path == "/api/location/reverse":
             try:
                 params = parse_qs(parsed.query)
