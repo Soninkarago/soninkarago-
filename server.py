@@ -44,7 +44,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v52-mobile-addresses"
+APP_VERSION = "2026.10.07-v53-traffic-validation"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -549,11 +549,31 @@ def reverse_geocode_senegal(lat, lng):
         "zone_label": (URBAN_CAR_ZONES.get(zone, {}).get("label") if zone else "") or "",
     }
 
+def traffic_route(result):
+    """Reject traffic-unaware fallback and malformed Google responses."""
+    fallback = result.get("fallbackInfo")
+    if fallback and fallback.get("routingMode") != "FALLBACK_TRAFFIC_AWARE":
+        raise RuntimeError("La circulation actuelle est indisponible. Réessayez avant de commander.")
+    try:
+        route = dict(result["routes"][0])
+        seconds = float(str(route["duration"]).removesuffix("s"))
+        meters = float(route["distanceMeters"])
+        if not math.isfinite(seconds) or not 0 < seconds <= 86400:
+            raise ValueError()
+        if not math.isfinite(meters) or not 0 <= meters <= 1000000:
+            raise ValueError()
+    except (KeyError, IndexError, TypeError, ValueError, OverflowError) as exc:
+        raise RuntimeError("Le calcul Google du trajet est indisponible. Réessayez.") from exc
+    route["traffic_routing"] = "TRAFFIC_AWARE" if fallback else "TRAFFIC_AWARE_OPTIMAL"
+    return route
+
+
 def urban_route(origin, arrival, avoid_tolls=False):
     payload = {
         "origin": {"location": {"latLng": {"latitude": origin["lat"], "longitude": origin["lng"]}}},
         "destination": {"location": {"latLng": {"latitude": arrival["lat"], "longitude": arrival["lng"]}}},
         "travelMode": "DRIVE", "routingPreference": "TRAFFIC_AWARE_OPTIMAL",
+        "trafficModel": "BEST_GUESS",
         "departureTime": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 30)),
         "extraComputations": ["TOLLS"],
         "routeModifiers": {"avoidTolls": avoid_tolls},
@@ -562,10 +582,10 @@ def urban_route(origin, arrival, avoid_tolls=False):
     req = Request("https://routes.googleapis.com/directions/v2:computeRoutes",
         json.dumps(payload).encode(), headers={"Content-Type": "application/json",
         "X-Goog-Api-Key": MAPS_API_KEY,
-        "X-Goog-FieldMask": "routes.distanceMeters,routes.duration,routes.staticDuration,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo"}, method="POST")
+        "X-Goog-FieldMask": "fallbackInfo,routes.distanceMeters,routes.duration,routes.staticDuration,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo"}, method="POST")
     try:
         with urlopen(req, timeout=20) as response:
-            return json.load(response)["routes"][0]
+            return traffic_route(json.load(response))
     except (URLError, TimeoutError, KeyError, IndexError, ValueError) as exc:
         raise RuntimeError("Impossible de calculer le trajet avec la circulation actuelle.") from exc
 
@@ -725,6 +745,8 @@ def urban_quote(zone_code, pickup, destination):
         "exp": calculated_at + URBAN_QUOTE_TTL,
         "calculated_at": calculated_at,
         "traffic_delay_min": delay_min,
+        "traffic_routing": route.get("traffic_routing", "TRAFFIC_AWARE_OPTIMAL"),
+        "duration_source": "google_routes",
         "fare_breakdown": breakdown,
         "route_note": route_note,
         "tolls_included": True,
@@ -899,7 +921,8 @@ def local_quote(service_code, pickup, destination):
         "departureTime": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 30)),
     }
     if travel_mode == "DRIVE":
-        payload["routingPreference"] = "TRAFFIC_AWARE"
+        payload["routingPreference"] = "TRAFFIC_AWARE_OPTIMAL"
+        payload["trafficModel"] = "BEST_GUESS"
     if {local_place_name(fare_pickup), local_place_name(fare_destination)} == {"Moudéry", "Bakel"}:
         # The local road through Diawara is 25.9 km; automatic fastest routing
         # otherwise takes the 39.4 km N2 detour. Use the verified local road
@@ -913,13 +936,13 @@ def local_quote(service_code, pickup, destination):
         headers={
             "Content-Type": "application/json",
             "X-Goog-Api-Key": MAPS_API_KEY,
-            "X-Goog-FieldMask": "routes.distanceMeters,routes.duration",
+            "X-Goog-FieldMask": "fallbackInfo,routes.distanceMeters,routes.duration",
         },
         method="POST",
     )
     try:
         with urlopen(req, timeout=12) as response:
-            route = json.load(response)["routes"][0]
+            route = traffic_route(json.load(response))
     except (URLError, TimeoutError, KeyError, IndexError, ValueError) as exc:
         raise RuntimeError("Impossible de calculer ce trajet pour le moment.") from exc
 
@@ -953,7 +976,10 @@ def local_quote(service_code, pickup, destination):
         "distance_km": round(km, 1),
         "duration_min": minutes,
         "fare": fare,
-        "exp": int(time.time()) + 300,
+        "exp": int(time.time()) + URBAN_QUOTE_TTL,
+        "calculated_at": int(time.time()),
+        "traffic_routing": route["traffic_routing"],
+        "duration_source": "google_routes",
     }
     body = b64(json.dumps(quote, separators=(",", ":")).encode())
     signature = hmac.new(AUTH_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
@@ -985,7 +1011,8 @@ def compute_live_eta(driver_lat, driver_lng, client_lat, client_lng, vehicle="Vo
         "origin": {"location": {"latLng": {"latitude": dlat, "longitude": dlng}}},
         "destination": {"location": {"latLng": {"latitude": clat, "longitude": clng}}},
         "travelMode": travel_mode,
-        "routingPreference": "TRAFFIC_AWARE",
+        "routingPreference": "TRAFFIC_AWARE_OPTIMAL",
+        "trafficModel": "BEST_GUESS",
         "departureTime": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 15))
     }
     req = Request(
@@ -994,14 +1021,14 @@ def compute_live_eta(driver_lat, driver_lng, client_lat, client_lng, vehicle="Vo
         headers={
             "Content-Type": "application/json",
             "X-Goog-Api-Key": MAPS_API_KEY,
-            "X-Goog-FieldMask": "routes.distanceMeters,routes.duration"
+            "X-Goog-FieldMask": "fallbackInfo,routes.distanceMeters,routes.duration"
         },
         method="POST"
     )
     try:
         with urlopen(req, timeout=8) as response:
             result = json.load(response)
-        route = result["routes"][0]
+        route = traffic_route(result)
         seconds = max(0, int(round(float(str(route["duration"]).rstrip("s")))))
         meters = max(0, int(route.get("distanceMeters", 0)))
         if seconds <= 0:
@@ -2587,7 +2614,7 @@ class App(SimpleHTTPRequestHandler):
                 )
                 if cache_valid:
                     elapsed = max(0, now - cached_at)
-                    eta_seconds = max(0, int(row.get("eta_seconds") or 0) - elapsed)
+                    eta_seconds = int(row.get("eta_seconds") or 0)
                     eta_distance_meters = int(row.get("eta_distance_meters") or 0)
                     eta_calculated_at = cached_at
                     eta_source = "google_routes"
