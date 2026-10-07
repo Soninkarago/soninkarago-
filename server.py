@@ -43,12 +43,21 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v48-local-road-routing"
+APP_VERSION = "2026.10.07-v49-traffic-tolls"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
 DAKAR_PRICE_PER_MINUTE = int(os.environ.get("DAKAR_PRICE_PER_MINUTE", "20"))
 DAKAR_MIN_FARE = int(os.environ.get("DAKAR_MIN_FARE", "700"))
+# SoninkaraGo commercial grid. City base follows the published Yango Eco
+# reference checked on 2026-10-07; this is not Yango's private surge algorithm.
+URBAN_BASE_FARE = 530
+URBAN_PRICE_PER_KM = 130
+URBAN_PRICE_PER_MINUTE = 14
+AIBD_BASE_FARE = 1000
+AIBD_PRICE_PER_KM = 250
+AIBD_PRICE_PER_MINUTE = 30
+URBAN_QUOTE_TTL = 120
 RATE_LIMITS = defaultdict(deque)
 RATE_LIMIT_LOCK = threading.Lock()
 SESSION_COOKIE_NAME = "skg_session"
@@ -530,6 +539,117 @@ def reverse_geocode_senegal(lat, lng):
         "zone_label": (URBAN_CAR_ZONES.get(zone, {}).get("label") if zone else "") or "",
     }
 
+def urban_route(origin, arrival, avoid_tolls=False):
+    payload = {
+        "origin": {"location": {"latLng": {"latitude": origin["lat"], "longitude": origin["lng"]}}},
+        "destination": {"location": {"latLng": {"latitude": arrival["lat"], "longitude": arrival["lng"]}}},
+        "travelMode": "DRIVE", "routingPreference": "TRAFFIC_AWARE_OPTIMAL",
+        "departureTime": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 30)),
+        "extraComputations": ["TOLLS"],
+        "routeModifiers": {"avoidTolls": avoid_tolls},
+        "languageCode": "fr", "regionCode": "sn",
+    }
+    req = Request("https://routes.googleapis.com/directions/v2:computeRoutes",
+        json.dumps(payload).encode(), headers={"Content-Type": "application/json",
+        "X-Goog-Api-Key": MAPS_API_KEY,
+        "X-Goog-FieldMask": "routes.distanceMeters,routes.duration,routes.staticDuration,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo"}, method="POST")
+    try:
+        with urlopen(req, timeout=20) as response:
+            return json.load(response)["routes"][0]
+    except (URLError, TimeoutError, KeyError, IndexError, ValueError) as exc:
+        raise RuntimeError("Impossible de calculer le trajet avec la circulation actuelle.") from exc
+
+
+def route_toll_fare(route):
+    # Missing tollInfo means no expected tolls; present but unpriced is UNKNOWN.
+    info = (route.get("travelAdvisory") or {}).get("tollInfo")
+    if info is None:
+        return 0
+    prices = info.get("estimatedPrice") or []
+    if not prices or any(p.get("currencyCode") != "XOF" for p in prices):
+        return None
+    try:
+        total = sum(int(p.get("units", 0)) + int(p.get("nanos", 0))/1e9 for p in prices)
+        return math.ceil(total) if math.isfinite(total) and total >= 0 else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def route_distance_segments(route):
+    """Use the actual road polyline, scaled to Google's measured road distance.
+
+    SoninkaraGo coverage zones are the commercial city boundary, not Yango's
+    unpublished boundaries. Suburban portions cost 151 F/km without a fixed jump.
+    """
+    encoded = (route.get("polyline") or {}).get("encodedPolyline") or ""
+    points, cursor, lat, lng = [], 0, 0, 0
+    try:
+        while cursor < len(encoded):
+            deltas = []
+            for _ in range(2):
+                result, shift = 0, 0
+                while True:
+                    value = ord(encoded[cursor]) - 63
+                    cursor += 1
+                    if not 0 <= value <= 63 or shift > 30:
+                        raise ValueError()
+                    result |= (value & 31) << shift
+                    shift += 5
+                    if value < 32:
+                        break
+                deltas.append(~(result >> 1) if result & 1 else result >> 1)
+            lat += deltas[0]
+            lng += deltas[1]
+            points.append((lat/1e5, lng/1e5))
+        segments = []
+        for a, b in zip(points, points[1:]):
+            length = distance_km(*a, *b)
+            midpoint = ((a[0]+b[0])/2, (a[1]+b[1])/2)
+            rate = URBAN_PRICE_PER_KM if detect_urban_zone(*midpoint) else 151
+            segments.append((length, rate))
+        total = sum(length for length, _ in segments)
+        if total <= 0:
+            raise ValueError()
+        scale = float(route["distanceMeters"])/1000/total
+        return [(length*scale, rate) for length, rate in segments]
+    except (IndexError, KeyError, TypeError, ValueError):
+        raise RuntimeError("Le détail de la route est indisponible. Recalculez le trajet.")
+
+
+def is_aibd_point(point):
+    # AIBD terminal, geocoded location only: never match a street by its name.
+    return distance_km(14.6708, -17.0733, point["lat"], point["lng"]) <= 3
+
+
+def urban_fare_breakdown(route, airport=False):
+    km = float(route["distanceMeters"])/1000
+    seconds = float(str(route["duration"]).rstrip("s"))
+    if not math.isfinite(km + seconds) or not .4 <= km <= 500 or not 0 < seconds <= 86400:
+        raise ValueError("Vérifiez le départ et la destination.")
+    toll = route_toll_fare(route)
+    if toll is None:
+        raise RuntimeError("Le prix du péage n'est pas disponible. Aucun total ne peut être confirmé.")
+    if airport:
+        base, distance_cost = AIBD_BASE_FARE, km*AIBD_PRICE_PER_KM
+        time_cost = seconds/60*AIBD_PRICE_PER_MINUTE
+    else:
+        base, included, distance_cost = URBAN_BASE_FARE, 1.1, 0
+        for length, rate in route_distance_segments(route):
+            free = min(length, included)
+            included -= free
+            distance_cost += (length-free)*rate
+        time_cost = max(0, seconds/60-4)*URBAN_PRICE_PER_MINUTE
+    distance_cost, time_cost = round(distance_cost), round(time_cost)
+    subtotal = base + distance_cost + time_cost + toll
+    total = int(math.ceil(subtotal/100)*100)
+    return {"base_fare": base, "distance_fare": distance_cost, "time_fare": time_cost,
+            "toll_fare": toll, "rounding_fare": total-subtotal, "total": total,
+            "tariff": "aibd" if airport else "urban",
+            "tariff_label": "AIBD : 1 000 F + 250 F/km + 30 F/min + péages" if airport else
+                "Ville : 530 F (1,1 km et 4 min inclus), puis 130 F/km, 151 F/km hors zones urbaines et 14 F/min",
+            "night_surcharge": 0}
+
+
 def urban_quote(zone_code, pickup, destination):
     if not MAPS_API_KEY or not AUTH_SECRET:
         raise RuntimeError("Calcul du trajet momentanément indisponible.")
@@ -561,60 +681,21 @@ def urban_quote(zone_code, pickup, destination):
             "La destination n'est pas encore dans une zone voiture SoninkaraGo."
         )
 
-    payload = json.dumps({
-        "origin": {
-            "location": {
-                "latLng": {
-                    "latitude": origin["lat"],
-                    "longitude": origin["lng"]
-                }
-            }
-        },
-        "destination": {
-            "location": {
-                "latLng": {
-                    "latitude": arrival["lat"],
-                    "longitude": arrival["lng"]
-                }
-            }
-        },
-        "travelMode": "DRIVE",
-        "routingPreference": "TRAFFIC_AWARE",
-        "departureTime": time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 30)
-        ),
-    }).encode()
-
-    req = Request(
-        "https://routes.googleapis.com/directions/v2:computeRoutes",
-        payload,
-        headers={
-            "Content-Type": "application/json",
-            "X-Goog-Api-Key": MAPS_API_KEY,
-            "X-Goog-FieldMask": "routes.distanceMeters,routes.duration",
-        },
-        method="POST",
-    )
-    try:
-        with urlopen(req, timeout=12) as response:
-            route = json.load(response)["routes"][0]
-    except (URLError, TimeoutError, KeyError, IndexError, ValueError) as exc:
-        raise RuntimeError(
-            "Impossible de calculer le trajet avec la circulation actuelle."
-        ) from exc
-
-    km = int(route["distanceMeters"]) / 1000
-    minutes = math.ceil(float(route["duration"].rstrip("s")) / 60)
-    if km < .4 or km > 500 or minutes < 1:
-        raise ValueError("Vérifiez le départ et la destination.")
-
-    fare = max(
-        DAKAR_MIN_FARE,
-        DAKAR_BASE_FARE
-        + km * DAKAR_PRICE_PER_KM
-        + minutes * DAKAR_PRICE_PER_MINUTE,
-    )
-    fare = int(math.ceil(fare / 100) * 100)
+    route = urban_route(origin, arrival)
+    route_note = ""
+    if route_toll_fare(route) is None:
+        # Never price an unknown toll as zero. Offer a verified toll-free route.
+        route = urban_route(origin, arrival, avoid_tolls=True)
+        if route_toll_fare(route) != 0:
+            raise RuntimeError("Le montant des péages est indisponible. Impossible de confirmer un prix tout compris.")
+        route_note = "Itinéraire sans péage : le trajet et sa durée évitent l'autoroute payante."
+    breakdown = urban_fare_breakdown(route, is_aibd_point(origin) or is_aibd_point(arrival))
+    km = float(route["distanceMeters"])/1000
+    minutes = math.ceil(float(str(route["duration"]).rstrip("s"))/60)
+    static_seconds = float(str(route.get("staticDuration", route["duration"])).rstrip("s"))
+    delay_min = max(0, math.ceil((float(str(route["duration"]).rstrip("s"))-static_seconds)/60))
+    calculated_at = int(time.time())
+    fare = breakdown["total"]
 
     quote = {
         "zone": detected_zone,
@@ -628,7 +709,12 @@ def urban_quote(zone_code, pickup, destination):
         "distance_km": round(km, 1),
         "duration_min": minutes,
         "fare": fare,
-        "exp": int(time.time()) + 300,
+        "exp": calculated_at + URBAN_QUOTE_TTL,
+        "calculated_at": calculated_at,
+        "traffic_delay_min": delay_min,
+        "fare_breakdown": breakdown,
+        "route_note": route_note,
+        "tolls_included": True,
     }
     body = b64(json.dumps(quote, separators=(",", ":")).encode())
     signature = hmac.new(
@@ -2830,7 +2916,7 @@ class App(SimpleHTTPRequestHandler):
                 """, (endpoint,p256dh,auth,ua,now,now))
             return self.sendj({"ok": True})
         if path in ("/api/urban/quote", "/api/dakar/quote"):
-            if not self.check_rate("urban-quote", 30, 3600):
+            if not self.check_rate("urban-quote", 90, 3600):
                 return
             try:
                 zone_code = (
@@ -4120,6 +4206,9 @@ class App(SimpleHTTPRequestHandler):
             booking_note = str(
                 data.get("booking_note", "")
             ).strip()[:300]
+
+            if urban_ride and quote.get("route_note"):
+                booking_note = (quote["route_note"] + " " + booking_note)[:500]
 
             client_coords = valid_coords(
                 data.get("client_lat"),

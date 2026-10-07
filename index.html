@@ -1640,6 +1640,10 @@ let pickupLocationCoords = null;
 let pickupLocationRequested = false;
 let dakarQuoteToken = '';
 let dakarQuoteRequest = 0;
+let dakarQuoteExpires = 0;
+let dakarQuoteCalculated = 0;
+let urbanQuoteRefreshTimer = null;
+let urbanQuoteLoading = false;
 let driverMap = null;
 
 let clientSelfMarker = null;
@@ -1737,6 +1741,8 @@ function updateUrbanZoneInfo(label=''){
 }
 
 function clearDakarQuote(resetZone=true){
+  clearInterval(urbanQuoteRefreshTimer); urbanQuoteRefreshTimer = null;
+  dakarQuoteExpires = 0; dakarQuoteCalculated = 0;
   dakarQuoteRequest += 1;
   dakarQuoteToken = '';
   if(resetZone){
@@ -1752,6 +1758,8 @@ $('#dakarDestination').addEventListener('input',clearDakarQuote);
 $('#useMyLocation').onclick=()=>locateUrbanPickup(true);
 
 $('#dakarQuoteBtn').onclick=async()=>{
+  if(urbanQuoteLoading) return;
+  urbanQuoteLoading = true;
   clearDakarQuote();
   const requestId = dakarQuoteRequest;
   const pickup = $('#dakarPickup').value.trim();
@@ -1762,15 +1770,25 @@ $('#dakarQuoteBtn').onclick=async()=>{
     const q=await post(localService ? '/local/quote' : '/urban/quote',{pickup,destination,service:localService});
     if(requestId !== dakarQuoteRequest || !isLocationRoute()) return;
     dakarQuoteToken=q.quote_token;
+    dakarQuoteExpires=q.exp||0; dakarQuoteCalculated=q.calculated_at||Date.now()/1000;
     detectedUrbanZone=q.zone||'';
     updateUrbanZoneInfo(q.zone_label||'');
     $('#fare').textContent=money(q.fare);
+    const details=q.fare_breakdown;
+    const costDetails=details ? ' Prise en charge '+money(details.base_fare)+', distance '+money(details.distance_fare)+', durée avec circulation '+money(details.time_fare)+', péages '+money(details.toll_fare)+', arrondi '+money(details.rounding_fare)+'. Tarif 24 h/24. ' : '';
     $('#dakarQuoteInfo').textContent=
       q.pickup+' → '+q.destination+' · '+q.distance_km+' km · '+q.duration_min+
-      ' min · '+q.drivers_online+' chauffeur(s) compatible(s) disponible(s) à moins de 20 km du départ. Devis valable 5 minutes.';
+      ' min · '+q.drivers_online+' chauffeur(s) compatible(s) disponible(s) à moins de 20 km du départ.'+
+      costDetails+(q.route_note||'')+(localService ? ' Devis valable 5 minutes.' :
+      ' Estimation Google actualisée à '+new Date(q.calculated_at*1000).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})+
+      '. Prix valable 2 minutes, actualisé chaque minute.');
+    if(!localService) urbanQuoteRefreshTimer=setInterval(()=>{
+      if(!document.hidden && isDakarRoute() && !urbanQuoteLoading && !$('#orderSuccess').textContent) $('#dakarQuoteBtn').click();
+    },60000);
   }catch(e){
     if(requestId === dakarQuoteRequest) $('#dakarQuoteInfo').textContent=e.message;
-  }
+  }finally{ urbanQuoteLoading=false; }
+
 };
 
 function updateFare(){
@@ -2051,6 +2069,10 @@ if(termsBox && !termsBox.checked){
 }
 const minicar = isMinicarRoute();
 const dakar = isDakarRoute();
+if(dakar && (urbanQuoteLoading || dakarQuoteExpires <= Date.now()/1000 || Date.now()/1000-dakarQuoteCalculated >= 60)){
+  if(!urbanQuoteLoading) await $('#dakarQuoteBtn').onclick();
+  throw new Error('Le prix a été actualisé avec la circulation. Vérifiez-le puis appuyez à nouveau sur Commander.');
+}
 if((dakar || isLocalRoute()) && !dakarQuoteToken){
   throw new Error('Calculez d’abord le prix du trajet.');
 }
@@ -2190,6 +2212,7 @@ const r=await post(
 }
 );
 
+clearInterval(urbanQuoteRefreshTimer); urbanQuoteRefreshTimer=null;
 lastRide=r.id;
 $('#shareRide')?.classList.remove('hidden');
 localStorage.setItem('lastRideIsDakar', (dakar || localRide) ? '1' : '0');
