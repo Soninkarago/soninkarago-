@@ -43,7 +43,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v43-moudery-bakel"
+APP_VERSION = "2026.10.07-v44-bakel-fares"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -687,6 +687,10 @@ def local_route_fare(service_code, km, pickup, destination):
     # Previously agreed commercial fares; apply in both directions only to
     # explicit village names, never to a district/street with a similar name.
     places = {local_place_name(pickup), local_place_name(destination)}
+    if places == {"Moudéry", "Bakel"}:
+        agreed = {"local_moto": 3000, "local_taxi": 10000}
+        if service_code in agreed:
+            return agreed[service_code]
     if places == {"Moudéry", "Bondji"}:
         agreed = {"local_moto": 2000}
         if service_code in agreed:

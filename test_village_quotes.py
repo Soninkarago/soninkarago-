@@ -59,7 +59,7 @@ class VillageQuotes(unittest.TestCase):
                 self.quote('local_tricycle',km=km)
 
     def test_moudery_bakel_liaison_both_directions(self):
-        for service, fare in [('local_moto',3000),('local_taxi',5000)]:
+        for service, fare in [('local_moto',3000),('local_taxi',10000)]:
             for pickup, destination in [('Moudery','Bakel'),('BAKEL, Sénégal','Mouderi')]:
                 quote, _ = self.quote(service,pickup,destination,km=45)
                 self.assertEqual(quote['fare'],fare)
