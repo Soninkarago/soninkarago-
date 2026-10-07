@@ -44,7 +44,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v50-driver-onboarding"
+APP_VERSION = "2026.10.07-v51-classic-minimum"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -53,6 +53,7 @@ DAKAR_MIN_FARE = int(os.environ.get("DAKAR_MIN_FARE", "700"))
 # SoninkaraGo commercial grid. City base follows the published Yango Eco
 # reference checked on 2026-10-07; this is not Yango's private surge algorithm.
 URBAN_BASE_FARE = 530
+URBAN_MIN_FARE = 1000
 URBAN_PRICE_PER_KM = 130
 URBAN_PRICE_PER_MINUTE = 14
 AIBD_BASE_FARE = 1000
@@ -642,12 +643,15 @@ def urban_fare_breakdown(route, airport=False):
         time_cost = max(0, seconds/60-4)*URBAN_PRICE_PER_MINUTE
     distance_cost, time_cost = round(distance_cost), round(time_cost)
     subtotal = base + distance_cost + time_cost + toll
-    total = int(math.ceil(subtotal/100)*100)
+    rounded_total = int(math.ceil(subtotal/100)*100)
+    minimum_adjustment = max(0, URBAN_MIN_FARE - rounded_total) if not airport else 0
+    total = rounded_total + minimum_adjustment
     return {"base_fare": base, "distance_fare": distance_cost, "time_fare": time_cost,
-            "toll_fare": toll, "rounding_fare": total-subtotal, "total": total,
+            "toll_fare": toll, "rounding_fare": rounded_total-subtotal,
+            "minimum_fare_adjustment": minimum_adjustment, "total": total,
             "tariff": "aibd" if airport else "urban",
             "tariff_label": "AIBD : 1 000 F + 250 F/km + 30 F/min + péages" if airport else
-                "Ville : 530 F (1,1 km et 4 min inclus), puis 130 F/km, 151 F/km hors zones urbaines et 14 F/min",
+                "Ville : 530 F (1,1 km et 4 min inclus), puis 130 F/km, 151 F/km hors zones urbaines et 14 F/min ; minimum 1 000 F par course",
             "night_surcharge": 0}
 
 

@@ -1775,7 +1775,7 @@ $('#dakarQuoteBtn').onclick=async()=>{
     updateUrbanZoneInfo(q.zone_label||'');
     $('#fare').textContent=money(q.fare);
     const details=q.fare_breakdown;
-    const costDetails=details ? ' Prise en charge '+money(details.base_fare)+', distance '+money(details.distance_fare)+', durée avec circulation '+money(details.time_fare)+', péages '+money(details.toll_fare)+', arrondi '+money(details.rounding_fare)+'. Tarif 24 h/24. ' : '';
+    const costDetails=details ? ' Prise en charge '+money(details.base_fare)+', distance '+money(details.distance_fare)+', durée avec circulation '+money(details.time_fare)+', péages '+money(details.toll_fare)+', arrondi '+money(details.rounding_fare)+(details.minimum_fare_adjustment ? ', complément au minimum de course '+money(details.minimum_fare_adjustment) : '')+'. Tarif 24 h/24. ' : '';
     $('#dakarQuoteInfo').textContent=
       q.pickup+' → '+q.destination+' · '+q.distance_km+' km · '+q.duration_min+
       ' min · '+q.drivers_online+' chauffeur(s) compatible(s) disponible(s) à moins de 20 km du départ.'+

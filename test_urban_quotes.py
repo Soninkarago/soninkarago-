@@ -19,7 +19,7 @@ class UrbanQuotes(unittest.TestCase):
         for minutes, expected in [(40,15800),(60,16400),(90,17300)]:
             q=server.urban_fare_breakdown(route(minutes), True)
             self.assertEqual(q['total'],expected)
-            self.assertEqual(sum(q[k] for k in ['base_fare','distance_fare','time_fare','toll_fare','rounding_fare']),expected)
+            self.assertEqual(sum(q[k] for k in ['base_fare','distance_fare','time_fare','toll_fare','rounding_fare','minimum_fare_adjustment']),expected)
             self.assertEqual(q['night_surcharge'],0)
         self.assertEqual(server.urban_fare_breakdown(route(40,False),True)['total'],13800)
 
@@ -33,10 +33,24 @@ class UrbanQuotes(unittest.TestCase):
 
     def test_city_allowances_and_continuous_suburb_price(self):
         with patch.object(server,'route_distance_segments',return_value=[(.8,130),(.3,151)]):
-            self.assertEqual(server.urban_fare_breakdown(route(4,False,1.1))['total'],600)
+            self.assertEqual(server.urban_fare_breakdown(route(4,False,1.1))['total'],1000)
         with patch.object(server,'route_distance_segments',return_value=[(2,130),(3,151)]):
             # 530 + .9*130 + 3*151 + (20-4)*14 = 1324 -> 1400
             self.assertEqual(server.urban_fare_breakdown(route(20,False,5))['total'],1400)
+
+    def test_classic_minimum_and_itemized_total(self):
+        # Short trips formerly quoted at 600 or 700 F must both reach 1000 F.
+        for km, minutes, adjustment in [(1.1, 4, 400), (2, 6, 300), (3.5, 10, 0)]:
+            with patch.object(server, 'route_distance_segments', return_value=[(km, 130)]):
+                q = server.urban_fare_breakdown(route(minutes, False, km))
+                self.assertGreaterEqual(q['total'], 1000)
+                self.assertEqual(q['minimum_fare_adjustment'], adjustment)
+                self.assertEqual(sum(q[k] for k in ['base_fare', 'distance_fare', 'time_fare',
+                    'toll_fare', 'rounding_fare', 'minimum_fare_adjustment']), q['total'])
+        for km in [.4, .8, 1.1, 2, 3, 5, 10]:
+            with patch.object(server, 'route_distance_segments', return_value=[(km, 130)]):
+                for minutes in [1, 4, 8, 20]:
+                    self.assertGreaterEqual(server.urban_fare_breakdown(route(minutes, False, km))['total'], 1000)
 
     def test_live_request_and_safe_toll_free_fallback(self):
         origin={'address':'Pikine, Sénégal','lat':14.75,'lng':-17.4}
