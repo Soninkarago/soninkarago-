@@ -15,6 +15,7 @@ import mimetypes
 import threading
 import math
 import uuid
+import unicodedata
 import socket
 import smtplib
 import ssl
@@ -42,7 +43,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.06-v39-mobile-preflight"
+APP_VERSION = "2026.10.07-v40-village-quotes"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -649,21 +650,47 @@ def dakar_quote(pickup, destination):
     return urban_quote("dakar", pickup, destination)
 
 
-def verify_dakar_quote(token):
+def verify_signed_quote(token):
     try:
         body, signature = token.split(".")
         expected = hmac.new(AUTH_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signature, expected):
             raise ValueError()
         quote = json.loads(b64decode(body))
-        quote.setdefault("zone", "dakar")
-        if quote.get("zone") not in URBAN_CAR_ZONES:
-            raise ValueError()
         if quote["exp"] < time.time():
             raise ValueError()
         return quote
     except (ValueError, KeyError, TypeError, binascii.Error, UnicodeDecodeError):
         raise ValueError("Le devis a expiré. Recalculez le prix avant de commander.")
+
+
+def verify_dakar_quote(token):
+    quote = verify_signed_quote(token)
+    quote.setdefault("zone", "dakar")
+    if quote.get("zone") not in URBAN_CAR_ZONES:
+        raise ValueError("Le devis ne correspond pas à un trajet urbain.")
+    return quote
+
+
+def local_place_name(value):
+    """Recognize common village spellings without rewriting street addresses."""
+    text = str(value or "").strip()[:180]
+    key = "".join(c for c in unicodedata.normalize("NFKD", text.lower())
+                  if not unicodedata.combining(c))
+    key = re.sub(r"[,\s]+senegal$", "", key).strip()
+    return {"bondy": "Bondji", "bondj": "Bondji", "bondji": "Bondji",
+            "moudery": "Moudéry", "mouderi": "Moudéry"}.get(key, text)
+
+
+def local_route_fare(service_code, km, pickup, destination):
+    # Previously agreed commercial fares; apply in both directions only to
+    # explicit village names, never to a district/street with a similar name.
+    places = {local_place_name(pickup), local_place_name(destination)}
+    if places == {"Moudéry", "Bondji"}:
+        agreed = {"local_moto": 2000, "local_taxi": 2500}
+        if service_code in agreed:
+            return agreed[service_code]
+    return local_fare(service_code, km)
 
 
 
@@ -677,12 +704,12 @@ LOCAL_SERVICE_CONFIG = {
     "local_tricycle": {
         "service": "3 roues",
         "label": "3 roues — villages et petites localités",
-        "max_km": 8,
+        "max_km": 35,
     },
     "local_taxi": {
         "service": "Voiture taxi",
         "label": "Taxi local — villages et petites localités",
-        "max_km": 25,
+        "max_km": 35,
     },
 }
 
@@ -707,7 +734,7 @@ def local_fare(service_code, km):
         return 3000  # jusqu'à 35 km (limite du service)
 
     if service_code == "local_tricycle":
-        # 3 roues : service de proximité, limité à 8 km.
+        # 3 roues : déplacements locaux et liaisons entre villages jusqu’à 35 km.
         if km <= 2:
             return 500
         if km <= 4:
@@ -726,7 +753,7 @@ def local_fare(service_code, km):
             return 2500
         if km <= 15:
             return 3500
-        return 5000  # jusqu'à 25 km (limite du service)
+        return 5000  # jusqu'à 35 km (limite du service)
 
     raise ValueError("Service local invalide.")
 
@@ -738,8 +765,8 @@ def local_quote(service_code, pickup, destination):
     if not config:
         raise ValueError("Choisissez un service local valide.")
 
-    origin = geocode_senegal(pickup)
-    arrival = geocode_senegal(destination)
+    origin = geocode_senegal(local_place_name(pickup))
+    arrival = geocode_senegal(local_place_name(destination))
     for point in (origin, arrival):
         lat, lng = point.get("lat"), point.get("lng")
         if lat is None or lng is None or not (12.0 <= float(lat) <= 17.5 and -18.5 <= float(lng) <= -11.0):
@@ -781,8 +808,12 @@ def local_quote(service_code, pickup, destination):
             "Ce trajet dépasse la distance prévue pour ce service local. Choisissez un autre service SoninkaraGo."
         )
 
-    pickup_place = reverse_geocode_senegal(origin["lat"], origin["lng"])
-    fare = local_fare(service_code, km)
+    # Reverse geocoding is an optional label, not a prerequisite for a price.
+    try:
+        pickup_place = reverse_geocode_senegal(origin["lat"], origin["lng"])
+    except (ValueError, RuntimeError):
+        pickup_place = {}
+    fare = local_route_fare(service_code, km, pickup, destination)
     quote = {
         "service_code": service_code,
         "service": config["service"],
@@ -804,8 +835,9 @@ def local_quote(service_code, pickup, destination):
 
 
 def verify_local_quote(token, expected_service):
-    quote = verify_dakar_quote(token)
-    if quote.get("service_code") != expected_service:
+    quote = verify_signed_quote(token)
+    if (quote.get("zone") != "local" or expected_service not in LOCAL_SERVICE_CONFIG
+            or quote.get("service_code") != expected_service):
         raise ValueError("Le devis ne correspond pas au service local choisi.")
     return quote
 
