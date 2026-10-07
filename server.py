@@ -43,7 +43,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v42-tricycle-distance"
+APP_VERSION = "2026.10.07-v43-moudery-bakel"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -679,7 +679,8 @@ def local_place_name(value):
                   if not unicodedata.combining(c))
     key = re.sub(r"[,\s]+senegal$", "", key).strip()
     return {"bondy": "Bondji", "bondj": "Bondji", "bondji": "Bondji",
-            "moudery": "Moudéry", "mouderi": "Moudéry"}.get(key, text)
+            "moudery": "Moudéry", "mouderi": "Moudéry",
+            "bakel": "Bakel"}.get(key, text)
 
 
 def local_route_fare(service_code, km, pickup, destination):
@@ -758,6 +759,18 @@ def local_fare(service_code, km):
     raise ValueError("Service local invalide.")
 
 
+def local_route_within_service(service_code, km, pickup, destination):
+    config = LOCAL_SERVICE_CONFIG[service_code]
+    if km <= float(config["max_km"]):
+        return True
+    # This explicitly supported village liaison exceeds the generic 35 km
+    # radius on the road network. Keep its two-way moto/taxi availability
+    # without extending proximity services or unrelated long-distance routes.
+    return (service_code in ("local_moto", "local_taxi")
+            and {local_place_name(pickup), local_place_name(destination)}
+            == {"Moudéry", "Bakel"})
+
+
 def local_quote(service_code, pickup, destination):
     if not MAPS_API_KEY or not AUTH_SECRET:
         raise RuntimeError("Calcul du trajet momentanément indisponible.")
@@ -803,7 +816,7 @@ def local_quote(service_code, pickup, destination):
     minutes = math.ceil(float(str(route["duration"]).rstrip("s")) / 60)
     if km < .1:
         raise ValueError("Vérifiez le départ et la destination.")
-    if km > float(config["max_km"]):
+    if not local_route_within_service(service_code, km, pickup, destination):
         if service_code == "local_tricycle":
             raise ValueError("Les 3 roues sont limités aux trajets de proximité de 8 km maximum. Choisissez Moto-taxi ou Taxi local pour ce trajet.")
         raise ValueError(

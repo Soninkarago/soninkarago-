@@ -58,6 +58,18 @@ class VillageQuotes(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'8 km maximum'):
                 self.quote('local_tricycle',km=km)
 
+    def test_moudery_bakel_liaison_both_directions(self):
+        for service, fare in [('local_moto',3000),('local_taxi',5000)]:
+            for pickup, destination in [('Moudery','Bakel'),('BAKEL, Sénégal','Mouderi')]:
+                quote, _ = self.quote(service,pickup,destination,km=45)
+                self.assertEqual(quote['fare'],fare)
+                self.assertEqual(quote['distance_km'],45)
+        with self.assertRaisesRegex(ValueError,'8 km maximum'):
+            self.quote('local_tricycle','Moudéry','Bakel',km=45)
+        for service in ['local_moto','local_taxi']:
+            with self.assertRaises(ValueError):
+                self.quote(service,'Rue Moudéry, Dakar','Bakel',km=45)
+
     def test_quote_security_and_service_separation(self):
         _, token = self.quote('local_moto')
         for other in ['local_taxi','urban_car','invalid']:
