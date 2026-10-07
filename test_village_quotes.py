@@ -27,7 +27,7 @@ class VillageQuotes(unittest.TestCase):
             return quote, token
 
     def test_three_services_both_directions_and_spelling(self):
-        for service, fare in [('local_moto',2000),('local_taxi',2500),('local_tricycle',1500)]:
+        for service, fare in [('local_moto',2000),('local_taxi',5000),('local_tricycle',1500)]:
             for pickup, destination in [('Moudéry','Bondy'),('Mouderi','Bondji'),('Bondj','Moudery')]:
                 with self.subTest(service=service, pickup=pickup):
                     quote, _ = self.quote(service, pickup, destination)

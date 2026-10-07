@@ -43,7 +43,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v40-village-quotes"
+APP_VERSION = "2026.10.07-v41-village-quotes"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -687,7 +687,7 @@ def local_route_fare(service_code, km, pickup, destination):
     # explicit village names, never to a district/street with a similar name.
     places = {local_place_name(pickup), local_place_name(destination)}
     if places == {"Moudéry", "Bondji"}:
-        agreed = {"local_moto": 2000, "local_taxi": 2500}
+        agreed = {"local_moto": 2000}
         if service_code in agreed:
             return agreed[service_code]
     return local_fare(service_code, km)
@@ -708,7 +708,7 @@ LOCAL_SERVICE_CONFIG = {
     },
     "local_taxi": {
         "service": "Voiture taxi",
-        "label": "Taxi local — villages et petites localités",
+        "label": "Taxi local — voiture entière",
         "max_km": 35,
     },
 }
