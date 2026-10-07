@@ -17,6 +17,7 @@ import math
 import uuid
 import unicodedata
 import socket
+from datetime import date
 import smtplib
 import ssl
 from email.message import EmailMessage
@@ -43,7 +44,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v49-traffic-tolls"
+APP_VERSION = "2026.10.07-v50-driver-onboarding"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -1299,6 +1300,79 @@ ALLOWED_VEHICLES = [
     "Minicar 14 places"
 ]
 
+# Private onboarding files live in PostgreSQL, never in the public web root.
+DRIVER_DOCUMENT_TYPES = {
+    "identity": "Pièce d’identité",
+    "licence": "Permis de conduire",
+    "registration": "Carte grise",
+    "insurance": "Assurance",
+    "inspection": "Visite technique",
+    "authorisation": "Autorisation de transport",
+}
+DRIVER_DOCUMENT_MAX_BYTES = 4 * 1024 * 1024
+
+
+def required_driver_documents(vehicle):
+    return ["licence", "registration", "insurance"]
+
+
+DRIVER_DETAIL_FIELDS = ("driving_licence_number", "driving_licence_expiry", "insurance_policy_number", "insurance_expiry", "vehicle_plate", "registration_card_number", "technical_inspection_expiry", "transport_authorisation_reference")
+
+
+def validate_application_details(data, vehicle):
+    details = {key: str(data.get(key, "")).strip()[:150] for key in DRIVER_DETAIL_FIELDS}
+    for key in ("driving_licence_expiry", "insurance_expiry", "technical_inspection_expiry"):
+        value = details[key]
+        if not value and key == "technical_inspection_expiry" and vehicle != "Voiture taxi":
+            continue
+        try:
+            valid_until = date.fromisoformat(value)
+        except ValueError:
+            raise ValueError("Indiquez une date réelle de validité pour le permis, l’assurance et les pièces applicables.")
+        if valid_until < date.today():
+            raise ValueError("Un document est expiré. Fournissez une pièce en cours de validité.")
+    required = DRIVER_DETAIL_FIELDS if vehicle == "Voiture taxi" else ("driving_licence_number", "insurance_policy_number", "vehicle_plate", "registration_card_number")
+    if any(not details[key] for key in required):
+        raise ValueError("Complétez les références du permis, de la carte grise et de l’assurance ainsi que les pièces applicables au véhicule.")
+    return details
+
+
+def validate_driver_document(data):
+    kind = data.get("kind")
+    encoded = data.get("content_base64")
+    if kind not in DRIVER_DOCUMENT_TYPES or not isinstance(encoded, str):
+        raise ValueError("Type de document invalide.")
+    if len(encoded) > ((DRIVER_DOCUMENT_MAX_BYTES + 2) // 3) * 4:
+        raise ValueError("Le document dépasse 4 Mo.")
+    try:
+        content = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("Document illisible.")
+    if not content or len(content) > DRIVER_DOCUMENT_MAX_BYTES:
+        raise ValueError("Le document doit contenir entre 1 octet et 4 Mo.")
+    if content.startswith(b"%PDF-") and b"%%EOF" in content[-2048:]:
+        mime, extension = "application/pdf", "pdf"
+    elif content.startswith(b"\xff\xd8\xff") and content.endswith(b"\xff\xd9"):
+        mime, extension = "image/jpeg", "jpg"
+    elif content.startswith(b"\x89PNG\r\n\x1a\n") and content.endswith(b"IEND\xaeB`\x82"):
+        mime, extension = "image/png", "png"
+    else:
+        raise ValueError("Choisissez un fichier PDF, JPEG ou PNG valide.")
+    return kind, mime, kind + "." + extension, content
+
+
+def driver_application(conn, driver):
+    documents = conn.execute(
+        "SELECT kind,filename,mime_type,octet_length(content) AS size,uploaded_at FROM driver_documents WHERE driver_id=%s ORDER BY kind",
+        (driver["id"],)
+    ).fetchall()
+    uploaded = {d["kind"] for d in documents}
+    required = required_driver_documents(driver["vehicle"])
+    return {"id": driver["id"], "name": driver["name"], "vehicle": driver["vehicle"],
+            "status": driver["status"], "documents": documents,
+            "details": {key: driver.get(key, "") or "" for key in DRIVER_DETAIL_FIELDS},
+            "required_documents": required, "missing_documents": [k for k in required if k not in uploaded]}
+
 
 def db():
     return psycopg.connect(
@@ -1482,6 +1556,20 @@ def init():
         conn.execute("""
             ALTER TABLE drivers
             ADD COLUMN IF NOT EXISTS online BOOLEAN NOT NULL DEFAULT FALSE
+        """)
+        conn.execute("""
+            ALTER TABLE drivers ADD COLUMN IF NOT EXISTS mobile_documents_required BOOLEAN NOT NULL DEFAULT FALSE
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS driver_documents(
+                driver_id TEXT NOT NULL REFERENCES drivers(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                content BYTEA NOT NULL,
+                uploaded_at BIGINT NOT NULL,
+                PRIMARY KEY(driver_id,kind)
+            )
         """)
 
         conn.execute("""
@@ -2183,10 +2271,10 @@ class App(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
 
-    def body(self):
+    def body(self, max_bytes=65536):
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if length < 0 or length > 65536:
+            if length < 0 or length > max_bytes:
                 self.sendj({"error": "Requête trop volumineuse."}, 413)
                 return None
             if not length:
@@ -2620,6 +2708,41 @@ class App(SimpleHTTPRequestHandler):
                     ).fetchall()
 
             return self.sendj(rows)
+        if path == "/api/driver/application":
+            user = self.auth()
+            if not user or user.get("role") != "driver_application":
+                return self.sendj({"error": "Reconnectez-vous au suivi de votre dossier."}, 401)
+            with db() as conn:
+                driver = conn.execute("SELECT * FROM drivers WHERE id=%s", (user.get("driver_id"),)).fetchone()
+                if not driver:
+                    return self.sendj({"error": "Dossier introuvable."}, 404)
+                result = driver_application(conn, driver)
+            return self.sendj(result)
+
+        if re.fullmatch(r"/api/admin/drivers/[^/]+/documents(?:/[a-z]+)?", path):
+            user = self.auth()
+            if not user or user.get("role") != "admin":
+                return self.sendj({"error": "Non autorisé"}, 401)
+            parts = path.split("/")
+            driver_id = parts[4]
+            with db() as conn:
+                if len(parts) == 6:
+                    rows = conn.execute("SELECT kind,filename,mime_type,octet_length(content) AS size,uploaded_at FROM driver_documents WHERE driver_id=%s ORDER BY kind", (driver_id,)).fetchall()
+                    return self.sendj(rows)
+                row = conn.execute("SELECT filename,mime_type,content FROM driver_documents WHERE driver_id=%s AND kind=%s", (driver_id,parts[6])).fetchone()
+                if not row:
+                    return self.sendj({"error": "Document introuvable."}, 404)
+                content = bytes(row["content"])
+            self.send_response(200)
+            self.send_header("Content-Type", row["mime_type"])
+            self.send_header("Content-Disposition", 'attachment; filename="' + row["filename"] + '"')
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            return self.wfile.write(content)
+
         # SOLDE CHAUFFEUR
         if path == "/api/driver/me":
 
@@ -2876,11 +2999,97 @@ class App(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        data = self.body()
+        if path == "/api/driver/application/documents":
+            user = self.auth()
+            if not user or user.get("role") != "driver_application":
+                return self.sendj({"error": "Connexion au dossier requise."}, 401)
+            if not self.check_rate("driver-documents", 30, 3600, user.get("driver_id", "")):
+                return
+        data = self.body(6 * 1024 * 1024 if path == "/api/driver/application/documents" else 65536)
         if data is None:
             return
         if path != "/api/paytech/ipn" and not self.same_origin_request():
             return
+        if path == "/api/driver/application/login":
+            phone = normalize_phone(data.get("phone"), data.get("phone_region", "SN"))
+            if not self.check_rate("driver-login", 8, 600, phone or "invalid"):
+                return
+            pin = str(data.get("pin", "")).strip()
+            with db() as conn:
+                driver = conn.execute("SELECT * FROM drivers WHERE phone IN (%s,%s) LIMIT 1", (phone,phone[4:] if phone and phone.startswith("+221") else phone)).fetchone()
+                if not driver or not verify_pin(pin,driver["pin_hash"],driver["pin_salt"]):
+                    return self.sendj({"error": "Téléphone ou PIN incorrect"}, 401)
+                result = driver_application(conn, driver)
+            result["application_token"] = make_token("driver_application", "", driver["id"])
+            return self.sendj(result)
+
+        if path == "/api/driver/application/details":
+            user = self.auth()
+            if not user or user.get("role") != "driver_application":
+                return self.sendj({"error": "Connexion au dossier requise."}, 401)
+            if not self.check_rate("driver-details", 20, 3600, user.get("driver_id", "")):
+                return
+            with db() as conn:
+                driver = conn.execute("SELECT * FROM drivers WHERE id=%s FOR UPDATE", (user.get("driver_id"),)).fetchone()
+                if not driver or driver["status"] != "pending":
+                    return self.sendj({"error": "Seul un dossier en attente peut être modifié."}, 409)
+                try:
+                    details = validate_application_details(data, driver["vehicle"])
+                except ValueError as exc:
+                    return self.sendj({"error": str(exc)}, 400)
+                changed = {key for key in DRIVER_DETAIL_FIELDS if (driver.get(key) or "") != details[key]}
+                if changed:
+                    # Changed references require the corresponding new piece, not an old file.
+                    groups = {"licence": ("driving_licence_number", "driving_licence_expiry"),
+                              "insurance": ("insurance_policy_number", "insurance_expiry"),
+                              "registration": ("vehicle_plate", "registration_card_number")}
+                    for kind, keys in groups.items():
+                        if changed.intersection(keys):
+                            conn.execute("DELETE FROM driver_documents WHERE driver_id=%s AND kind=%s", (driver["id"],kind))
+                    assignments = ",".join(key + "=%s" for key in DRIVER_DETAIL_FIELDS)
+                    conn.execute("UPDATE drivers SET " + assignments + ",compliance_verified=FALSE,compliance_verified_at=NULL WHERE id=%s", tuple(details[key] for key in DRIVER_DETAIL_FIELDS) + (driver["id"],))
+                    driver.update(details)
+                result = driver_application(conn, driver)
+            return self.sendj({"ok": True, **result})
+
+        if path == "/api/driver/application/documents":
+            try:
+                kind, mime, filename, content = validate_driver_document(data)
+            except ValueError as exc:
+                return self.sendj({"error": str(exc)}, 400)
+            with db() as conn:
+                driver = conn.execute("SELECT * FROM drivers WHERE id=%s FOR UPDATE", (user.get("driver_id"),)).fetchone()
+                if not driver:
+                    return self.sendj({"error": "Dossier introuvable."}, 404)
+                if driver["status"] != "pending":
+                    return self.sendj({"error": "Seuls les dossiers en attente peuvent recevoir des pièces."}, 409)
+                conn.execute("""INSERT INTO driver_documents(driver_id,kind,filename,mime_type,content,uploaded_at)
+                    VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(driver_id,kind) DO UPDATE SET
+                    filename=EXCLUDED.filename,mime_type=EXCLUDED.mime_type,content=EXCLUDED.content,uploaded_at=EXCLUDED.uploaded_at""",
+                    (driver["id"],kind,filename,mime,content,int(time.time())))
+                conn.execute("UPDATE drivers SET mobile_documents_required=TRUE,compliance_verified=FALSE,compliance_verified_at=NULL WHERE id=%s", (driver["id"],))
+                result = driver_application(conn, driver)
+            return self.sendj({"ok": True, **result})
+
+        if path == "/api/driver/application/delete":
+            user = self.auth()
+            if not user or user.get("role") != "driver_application":
+                return self.sendj({"error": "Connexion au dossier requise."}, 401)
+            if not self.check_rate("driver-delete", 3, 3600, user.get("driver_id", "")):
+                return
+            with db() as conn:
+                driver = conn.execute("SELECT * FROM drivers WHERE id=%s FOR UPDATE", (user.get("driver_id"),)).fetchone()
+                if not driver or not verify_pin(str(data.get("pin", "")),driver["pin_hash"],driver["pin_salt"]):
+                    return self.sendj({"error": "PIN incorrect"}, 401)
+                if driver["status"] not in ("pending", "rejected"):
+                    return self.sendj({"error": "Connectez-vous à votre compte chauffeur pour le supprimer."}, 409)
+                active = conn.execute("SELECT COUNT(*) AS n FROM rides WHERE driver_id=%s AND status IN ('accepted','arriving','in_progress','deposit_paid','fully_paid')", (driver["id"],)).fetchone()
+                if active["n"]:
+                    return self.sendj({"error": "Une course active empêche la suppression."}, 409)
+                conn.execute("DELETE FROM driver_recharges WHERE driver_id=%s", (driver["id"],))
+                conn.execute("UPDATE rides SET driver_id=NULL,driver_name='Compte supprimé' WHERE driver_id=%s", (driver["id"],))
+                conn.execute("DELETE FROM drivers WHERE id=%s", (driver["id"],))
+            return self.sendj({"ok": True})
         if path == "/api/contact":
             if not self.check_rate("contact", 5, 3600):
                 return
@@ -3422,6 +3631,8 @@ class App(SimpleHTTPRequestHandler):
                 if missing:
                     return self.sendj({"error": "Dossier voiture taxi incomplet : " + ", ".join(missing)}, 400)
 
+            if data.get("mobile_registration") is True and (not driving_licence_expiry or not insurance_expiry):
+                return self.sendj({"error": "Indiquez les dates de validité du permis et de l’assurance."}, 400)
             today = time.strftime("%Y-%m-%d")
             for label, value in (
                 ("permis", driving_licence_expiry),
@@ -3432,6 +3643,10 @@ class App(SimpleHTTPRequestHandler):
                     continue
                 if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
                     return self.sendj({"error": f"Date invalide pour {label} (AAAA-MM-JJ)."}, 400)
+                try:
+                    date.fromisoformat(value)
+                except ValueError:
+                    return self.sendj({"error": f"Date invalide pour {label}."}, 400)
                 if value < today:
                     return self.sendj({"error": f"Le document {label} est expiré."}, 400)
 
@@ -3486,6 +3701,12 @@ class App(SimpleHTTPRequestHandler):
                     400
                 )
 
+
+            if data.get("mobile_registration") is True:
+                try:
+                    validate_application_details(data, vehicle)
+                except ValueError as exc:
+                    return self.sendj({"error": str(exc)}, 400)
 
             pin_hash, pin_salt = hash_pin(pin)
 
@@ -3568,6 +3789,9 @@ class App(SimpleHTTPRequestHandler):
                         )
                     )
 
+                    if data.get("mobile_registration") is True:
+                        conn.execute("UPDATE drivers SET mobile_documents_required=TRUE WHERE id=%s", (driver_id,))
+
             except psycopg.errors.UniqueViolation:
                 return self.sendj(
                     {
@@ -3582,6 +3806,7 @@ class App(SimpleHTTPRequestHandler):
                 {
                     "ok": True,
                     "status": "pending",
+                    **({"application_token": make_token("driver_application", "", driver_id)} if data.get("mobile_registration") is True else {}),
                     "message":
                     "Inscription envoyée. Votre compte doit être validé par SoninkaraGo."
                 },
@@ -3640,6 +3865,20 @@ class App(SimpleHTTPRequestHandler):
                 )
 
 
+            if not verify_pin(
+                pin,
+                driver["pin_hash"],
+                driver["pin_salt"]
+            ):
+                return self.sendj(
+                    {
+                        "error":
+                        "Téléphone ou PIN incorrect"
+                    },
+                    401
+                )
+
+
             if driver["status"] == "pending":
                 return self.sendj(
                     {
@@ -3667,20 +3906,6 @@ class App(SimpleHTTPRequestHandler):
                         "Compte chauffeur inactif"
                     },
                     403
-                )
-
-
-            if not verify_pin(
-                pin,
-                driver["pin_hash"],
-                driver["pin_salt"]
-            ):
-                return self.sendj(
-                    {
-                        "error":
-                        "Téléphone ou PIN incorrect"
-                    },
-                    401
                 )
 
 
@@ -3896,18 +4121,26 @@ class App(SimpleHTTPRequestHandler):
                 row = conn.execute(
                     """
                     SELECT
-                        vehicle,
+                        vehicle, mobile_documents_required,
                         driving_licence_number, driving_licence_expiry,
                         insurance_policy_number, insurance_expiry,
                         vehicle_plate, registration_card_number,
                         technical_inspection_expiry,
                         transport_authorisation_reference
-                    FROM drivers WHERE id=%s
+                    FROM drivers WHERE id=%s FOR UPDATE
                     """,
                     (driver_id,)
                 ).fetchone()
                 if not row:
                     return self.sendj({"error": "Chauffeur introuvable"}, 404)
+
+                mobile = row
+                if mobile["mobile_documents_required"]:
+                    docs = conn.execute("SELECT kind FROM driver_documents WHERE driver_id=%s", (driver_id,)).fetchall()
+                    received = {d["kind"] for d in docs}
+                    missing = [DRIVER_DOCUMENT_TYPES[k] for k in required_driver_documents(row["vehicle"]) if k not in received]
+                    if missing:
+                        return self.sendj({"error": "Pièces manquantes : " + ", ".join(missing)}, 400)
 
                 # Pour une voiture taxi, toutes les références prévues par le
                 # profil strict doivent être présentes avant vérification.
@@ -3922,6 +4155,18 @@ class App(SimpleHTTPRequestHandler):
                         "technical_inspection_expiry","transport_authorisation_reference"
                     )):
                         return self.sendj({"error": "Le dossier voiture taxi est incomplet."}, 400)
+
+                for label, value in (("permis", row.get("driving_licence_expiry")), ("assurance", row.get("insurance_expiry")), ("visite technique", row.get("technical_inspection_expiry"))):
+                    if not value:
+                        if mobile["mobile_documents_required"] and label in ("permis", "assurance"):
+                            return self.sendj({"error": "Date de validité manquante : " + label}, 400)
+                        continue
+                    try:
+                        valid_until = date.fromisoformat(value)
+                    except ValueError:
+                        return self.sendj({"error": "Date invalide : " + label}, 400)
+                    if valid_until < date.today():
+                        return self.sendj({"error": "Document expiré : " + label}, 400)
 
                 notes = str(data.get("notes", ""))[:1500]
                 checklist = data.get("checklist") or {
@@ -3974,7 +4219,7 @@ class App(SimpleHTTPRequestHandler):
 
             with db() as conn:
                 row = conn.execute(
-                    "SELECT compliance_verified FROM drivers WHERE id=%s",
+                    "SELECT * FROM drivers WHERE id=%s FOR UPDATE",
                     (driver_id,)
                 ).fetchone()
                 if not row:
@@ -3984,6 +4229,14 @@ class App(SimpleHTTPRequestHandler):
                         {"error": "Vérifiez d’abord le dossier réglementaire du chauffeur avant de l’accepter."},
                         400
                     )
+                if row.get("mobile_documents_required"):
+                    try:
+                        validate_application_details(row, row["vehicle"])
+                    except ValueError as exc:
+                        return self.sendj({"error": str(exc)}, 400)
+                    received = {d["kind"] for d in conn.execute("SELECT kind FROM driver_documents WHERE driver_id=%s", (driver_id,)).fetchall()}
+                    if any(k not in received for k in required_driver_documents(row["vehicle"])):
+                        return self.sendj({"error": "Les trois pièces doivent être reçues avant activation."}, 400)
                 cur = conn.execute(
                     """
                     UPDATE drivers
