@@ -43,7 +43,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v44-bakel-fares"
+APP_VERSION = "2026.10.07-v45-local-territory"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -704,7 +704,7 @@ LOCAL_SERVICE_CONFIG = {
     "local_moto": {
         "service": "Moto-taxi",
         "label": "Moto-taxi — villages et petites localités",
-        "max_km": 35,
+        "max_km": None,
     },
     "local_tricycle": {
         "service": "3 roues",
@@ -714,9 +714,14 @@ LOCAL_SERVICE_CONFIG = {
     "local_taxi": {
         "service": "Voiture taxi",
         "label": "Taxi local — voiture entière",
-        "max_km": 35,
+        "max_km": None,
     },
 }
+
+
+# Road distance measured by the live Google Routes quote on 2026-10-07.
+# Issa's agreed reference: Moudéry–Bakel, moto 3000 F / entire taxi 10000 F.
+LOCAL_REFERENCE_KM = 39.4
 
 
 def local_fare(service_code, km):
@@ -736,7 +741,7 @@ def local_fare(service_code, km):
             return 200
         if km <= 15:
             return 2000
-        return 3000  # jusqu'à 35 km (limite du service)
+        return max(3000, math.ceil(km * 3000 / LOCAL_REFERENCE_KM / 100) * 100)
 
     if service_code == "local_tricycle":
         # 3 roues : proximité uniquement, jusqu’à 8 km.
@@ -758,21 +763,14 @@ def local_fare(service_code, km):
             return 2500
         if km <= 15:
             return 3500
-        return 5000  # jusqu'à 35 km (limite du service)
+        return max(5000, math.ceil(km * 10000 / LOCAL_REFERENCE_KM / 100) * 100)
 
     raise ValueError("Service local invalide.")
 
 
 def local_route_within_service(service_code, km, pickup, destination):
     config = LOCAL_SERVICE_CONFIG[service_code]
-    if km <= float(config["max_km"]):
-        return True
-    # This explicitly supported village liaison exceeds the generic 35 km
-    # radius on the road network. Keep its two-way moto/taxi availability
-    # without extending proximity services or unrelated long-distance routes.
-    return (service_code in ("local_moto", "local_taxi")
-            and {local_place_name(pickup), local_place_name(destination)}
-            == {"Moudéry", "Bakel"})
+    return config["max_km"] is None or km <= float(config["max_km"])
 
 
 def local_quote(service_code, pickup, destination):

@@ -45,10 +45,15 @@ class VillageQuotes(unittest.TestCase):
             quote, _ = self.quote(service,'Moudéry','Moudéry',km=1)
             self.assertEqual(quote['fare'],fare)
 
-    def test_long_trip_still_rejected(self):
-        for service in server.LOCAL_SERVICE_CONFIG:
-            with self.assertRaises(ValueError):
-                self.quote(service,km=36)
+    def test_all_localities_use_distance_prices(self):
+        for service, fare in [('local_moto',7700),('local_taxi',25400)]:
+            quote, _ = self.quote(service,'Village A','Village B',km=100)
+            self.assertEqual(quote['fare'],fare)
+            self.assertEqual(quote['distance_km'],100)
+            prices = [server.local_fare(service,km) for km in [15,17,35,39.4,50,100]]
+            self.assertEqual(prices,sorted(prices))
+        with self.assertRaises(ValueError):
+            self.quote('local_tricycle',km=36)
 
     def test_tricycle_proximity_limit(self):
         quote, _ = self.quote('local_tricycle','Moudéry','Diawara',km=7.4)
@@ -66,9 +71,8 @@ class VillageQuotes(unittest.TestCase):
                 self.assertEqual(quote['distance_km'],45)
         with self.assertRaisesRegex(ValueError,'8 km maximum'):
             self.quote('local_tricycle','Moudéry','Bakel',km=45)
-        for service in ['local_moto','local_taxi']:
-            with self.assertRaises(ValueError):
-                self.quote(service,'Rue Moudéry, Dakar','Bakel',km=45)
+        quote, _ = self.quote('local_taxi','Rue Moudéry, Dakar','Bakel',km=45)
+        self.assertNotEqual(quote['fare'],10000)
 
     def test_quote_security_and_service_separation(self):
         _, token = self.quote('local_moto')
