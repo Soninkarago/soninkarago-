@@ -1779,7 +1779,7 @@ $('#dakarQuoteBtn').onclick=async()=>{
     $('#dakarQuoteInfo').textContent=
       q.pickup+' → '+q.destination+' · '+q.distance_km+' km · '+q.duration_min+
       ' min · '+q.drivers_online+' chauffeur(s) compatible(s) disponible(s) à moins de 20 km du départ.'+
-      costDetails+(q.route_note||'')+(localService ? ' Devis valable 5 minutes.' :
+      costDetails+(q.route_note||'')+(localService ? ' Estimation Google avec trafic. Devis valable 2 minutes.' :
       ' Estimation Google actualisée à '+new Date(q.calculated_at*1000).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})+
       '. Prix valable 2 minutes, actualisé chaque minute.');
     if(!localService) urbanQuoteRefreshTimer=setInterval(()=>{
