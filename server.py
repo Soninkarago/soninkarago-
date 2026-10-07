@@ -44,7 +44,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v53-traffic-validation"
+APP_VERSION = "2026.10.07-v54-native-email-recovery"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -123,6 +123,48 @@ def deliver_contact(fields):
         client.login(user, password)
         if client.send_message(message):
             raise RuntimeError("Contact recipient rejected")
+
+
+def recovery_email_configured():
+    return all(os.environ.get(key, "").strip() for key in ("CONTACT_SMTP_HOST", "CONTACT_SMTP_USER", "CONTACT_SMTP_PASSWORD")) and os.environ.get("CONTACT_SMTP_SECURITY", "ssl").lower() in ("ssl", "starttls")
+
+
+def valid_recovery_email(value):
+    value = str(value or "").strip().lower()
+    return value if len(value) <= 254 and re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+", value) else None
+
+
+def recovery_code_hash(challenge_hash, code):
+    return hmac.new(AUTH_SECRET.encode(), (challenge_hash + ":" + code).encode(), hashlib.sha256).hexdigest()
+
+
+def deliver_recovery_email(challenge_hash, recipient, code):
+    if not recipient:
+        return
+    try:
+        user = os.environ["CONTACT_SMTP_USER"]
+        mode = os.environ.get("CONTACT_SMTP_SECURITY", "ssl").lower()
+        sender = os.environ.get("CONTACT_SMTP_FROM", user).strip()
+        message = EmailMessage()
+        message["From"] = sender
+        message["To"] = recipient
+        message["Subject"] = "SoninkaraGo — Votre code de vérification"
+        message.set_content("Votre code SoninkaraGo : " + code + "\n\nCe code est valable 10 minutes. Saisissez-le dans l’application. Ne le partagez avec personne. Si vous n’avez pas fait cette demande, ignorez ce message.")
+        context = ssl.create_default_context()
+        client_class = smtplib.SMTP_SSL if mode == "ssl" else smtplib.SMTP
+        kwargs = {"timeout": 15}
+        if mode == "ssl":
+            kwargs["context"] = context
+        with client_class(os.environ["CONTACT_SMTP_HOST"], int(os.environ.get("CONTACT_SMTP_PORT", "465" if mode == "ssl" else "587")), **kwargs) as client:
+            if mode == "starttls":
+                client.ehlo(); client.starttls(context=context); client.ehlo()
+            client.login(user, os.environ["CONTACT_SMTP_PASSWORD"])
+            if client.send_message(message):
+                raise RuntimeError("Recipient unavailable")
+        with db() as conn:
+            conn.execute("UPDATE driver_email_recoveries SET delivered=TRUE WHERE challenge_hash=%s AND expires_at>%s", (challenge_hash, int(time.time())))
+    except Exception:
+        print("Driver recovery email delivery unavailable", flush=True)
 
 
 def allow_request(key, limit, window_seconds):
@@ -1409,7 +1451,7 @@ def driver_application(conn, driver):
     ).fetchall()
     uploaded = {d["kind"] for d in documents}
     required = required_driver_documents(driver["vehicle"])
-    return {"id": driver["id"], "name": driver["name"], "vehicle": driver["vehicle"],
+    return {"phone": driver["phone"], "recovery_email": driver.get("recovery_email", "") if driver.get("recovery_email_verified") else "", "id": driver["id"], "name": driver["name"], "vehicle": driver["vehicle"],
             "status": driver["status"], "documents": documents,
             "details": {key: driver.get(key, "") or "" for key in DRIVER_DETAIL_FIELDS},
             "required_documents": required, "missing_documents": [k for k in required if k not in uploaded]}
@@ -1592,6 +1634,23 @@ def init():
                 pin_salt TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 created_at BIGINT NOT NULL
+            )
+        """)
+        conn.execute("ALTER TABLE drivers ADD COLUMN IF NOT EXISTS pin_reset_at DOUBLE PRECISION NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE drivers ADD COLUMN IF NOT EXISTS recovery_email TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE drivers ADD COLUMN IF NOT EXISTS recovery_email_verified BOOLEAN NOT NULL DEFAULT FALSE")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS driver_email_recoveries(
+                challenge_hash TEXT PRIMARY KEY,
+                driver_id TEXT REFERENCES drivers(id) ON DELETE CASCADE,
+                phone TEXT NOT NULL,
+                email TEXT NOT NULL,
+                purpose TEXT NOT NULL,
+                salt_snapshot TEXT NOT NULL DEFAULT '',
+                code_hash TEXT NOT NULL,
+                expires_at BIGINT NOT NULL,
+                delivered BOOLEAN NOT NULL DEFAULT FALSE,
+                attempts INTEGER NOT NULL DEFAULT 0
             )
         """)
         conn.execute("""
@@ -1954,6 +2013,7 @@ def b64decode(data):
 def make_token(role, name="", driver_id=""):
     payload = {
         "role": role,
+        "issued_at": time.time(),
         "name": name,
         "driver_id": driver_id,
         "exp": int(time.time()) + (12 * 60 * 60)
@@ -2367,15 +2427,20 @@ class App(SimpleHTTPRequestHandler):
 
     def auth(self):
         user = read_token(self.headers.get("Authorization"))
-        if user:
-            return user
-        try:
-            cookies = SimpleCookie()
-            cookies.load(self.headers.get("Cookie", ""))
-            morsel = cookies.get(SESSION_COOKIE_NAME)
-            return read_token_value(morsel.value if morsel else "")
-        except Exception:
-            return None
+        if not user:
+            try:
+                cookies = SimpleCookie()
+                cookies.load(self.headers.get("Cookie", ""))
+                morsel = cookies.get(SESSION_COOKIE_NAME)
+                user = read_token_value(morsel.value if morsel else "")
+            except Exception:
+                return None
+        if user and user.get("role") in ("driver", "driver_application"):
+            with db() as conn:
+                driver = conn.execute("SELECT pin_reset_at FROM drivers WHERE id=%s", (user.get("driver_id"),)).fetchone()
+            if driver and float(user.get("issued_at", 0)) <= float(driver.get("pin_reset_at") or 0) and driver.get("pin_reset_at"):
+                return None
+        return user
 
 
     def serve_index(self):
@@ -2812,7 +2877,7 @@ class App(SimpleHTTPRequestHandler):
             with db() as conn:
                 driver = conn.execute(
                     """
-                    SELECT balance, name, vehicle, village, online, status
+                    SELECT balance, name, phone, recovery_email, recovery_email_verified, vehicle, village, online, status
                     FROM drivers
                     WHERE id=%s
                     """,
@@ -2828,6 +2893,8 @@ class App(SimpleHTTPRequestHandler):
             if driver["status"] != "approved":
                 return self.sendj({"error": "Compte chauffeur inactif"}, 403)
             return self.sendj({
+                "phone": driver["phone"],
+                "recovery_email": driver["recovery_email"] if driver["recovery_email_verified"] else "",
                 "balance": int(driver["balance"] or 0),
                 "name": driver["name"],
                 "vehicle": driver["vehicle"],
@@ -3062,6 +3129,71 @@ class App(SimpleHTTPRequestHandler):
             return
         if path != "/api/paytech/ipn" and not self.same_origin_request():
             return
+        if path in ("/api/driver/pin-reset/request", "/api/driver/pin-reset/confirm", "/api/driver/recovery-email/request", "/api/driver/recovery-email/confirm"):
+            phone = normalize_phone(data.get("phone"), "SN")
+            if not phone or not phone.startswith("+221"):
+                return self.sendj({"error": "Indiquez le numéro sénégalais de votre compte."}, 400)
+            if not recovery_email_configured():
+                return self.sendj({"error": "L’envoi du code par e-mail est temporairement indisponible."}, 503)
+            identity = hashlib.sha256(phone.encode()).hexdigest()
+            purpose = "enroll" if "/recovery-email/" in path else "reset"
+            if not self.check_rate("pin-recovery-ip", 30, 3600):
+                return
+            if path.endswith("/request"):
+                if not allow_request_shared("pin-mail-minute:" + identity, 1, 60) or not allow_request_shared("pin-mail-hour:" + identity, 4, 3600):
+                    return self.sendj({"error": "Attendez avant de demander un nouveau code."}, 429)
+                with db() as conn:
+                    driver = conn.execute("SELECT * FROM drivers WHERE phone IN (%s,%s) LIMIT 1", (phone, phone[4:])).fetchone()
+                recipient = valid_recovery_email(data.get("email")) if purpose == "enroll" else (driver.get("recovery_email") if driver and driver.get("recovery_email_verified") else "")
+                if purpose == "reset" and recipient != valid_recovery_email(data.get("email")):
+                    recipient = ""
+                if purpose == "enroll":
+                    if not recipient:
+                        return self.sendj({"error": "Indiquez une adresse e-mail valide."}, 400)
+                    if driver and not verify_pin(str(data.get("pin", "")),driver["pin_hash"],driver["pin_salt"]):
+                        return self.sendj({"error": "Téléphone ou PIN incorrect. Connectez-vous pour ajouter votre e-mail."}, 401)
+                    # A mail address cannot be changed merely by requesting a recovery code.
+                    if not allow_request_shared("mail-enroll:" + hashlib.sha256(recipient.encode()).hexdigest(), 5, 3600):
+                        return self.sendj({"error": "Trop de demandes pour cette adresse. Réessayez plus tard."}, 429)
+                challenge = secrets.token_urlsafe(32)
+                digest = hashlib.sha256(challenge.encode()).hexdigest()
+                code = f"{secrets.randbelow(1000000):06d}"
+                with db() as conn:
+                    conn.execute("DELETE FROM driver_email_recoveries WHERE expires_at<%s", (int(time.time()) - 86400,))
+                    conn.execute("INSERT INTO driver_email_recoveries(challenge_hash,driver_id,phone,email,purpose,salt_snapshot,code_hash,expires_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s)",
+                                 (digest,driver["id"] if driver else None,phone,recipient or "",purpose,driver["pin_salt"] if driver else "",recovery_code_hash(digest,code),int(time.time())+600))
+                threading.Thread(target=deliver_recovery_email, args=(digest,recipient,code), daemon=True).start()
+                return self.sendj({"ok": True, "challenge": challenge, "expires_in": 600,
+                                   "message": "Un code a été demandé pour votre e-mail." if purpose == "enroll" else "Si ce compte dispose d’un e-mail vérifié, vous y recevrez un code. Vérifiez aussi les courriers indésirables."}, 202)
+            challenge = str(data.get("challenge", "")); code = str(data.get("code", ""))
+            if not re.fullmatch(r"[A-Za-z0-9_-]{40,60}",challenge) or not re.fullmatch(r"[0-9]{6}",code):
+                return self.sendj({"error": "Indiquez les 6 chiffres du code reçu par e-mail."}, 400)
+            pin = str(data.get("pin", ""))
+            if purpose == "reset" and (not re.fullmatch(r"[0-9]{4,6}",pin) or pin != data.get("confirm_pin")):
+                return self.sendj({"error": "Choisissez et confirmez le même PIN de 4 à 6 chiffres."}, 400)
+            digest = hashlib.sha256(challenge.encode()).hexdigest()
+            with db() as conn:
+                recovery = conn.execute("SELECT * FROM driver_email_recoveries WHERE challenge_hash=%s FOR UPDATE", (digest,)).fetchone()
+                if not recovery or recovery["phone"] != phone or recovery["purpose"] != purpose or recovery["expires_at"] <= time.time() or recovery["attempts"] >= 5:
+                    return self.sendj({"error": "Code invalide ou expiré. Demandez un nouveau code."}, 400)
+                conn.execute("UPDATE driver_email_recoveries SET attempts=attempts+1 WHERE challenge_hash=%s", (digest,))
+                if not recovery["delivered"] or not hmac.compare_digest(recovery["code_hash"],recovery_code_hash(digest,code)):
+                    return self.sendj({"error": "Code invalide ou expiré."}, 400)
+                driver = conn.execute("SELECT * FROM drivers WHERE id=%s FOR UPDATE", (recovery["driver_id"],)).fetchone() if recovery["driver_id"] else None
+                if driver and driver["pin_salt"] != recovery["salt_snapshot"]:
+                    return self.sendj({"error": "La sécurité du compte a changé. Demandez un nouveau code."}, 400)
+                if purpose == "enroll":
+                    if driver:
+                        conn.execute("UPDATE drivers SET recovery_email=%s,recovery_email_verified=TRUE WHERE id=%s", (recovery["email"],driver["id"]))
+                    conn.execute("DELETE FROM driver_email_recoveries WHERE challenge_hash=%s", (digest,))
+                    return self.sendj({"ok": True, "email": recovery["email"], "email_token": make_token("verified_recovery_email",recovery["email"],phone), "message": "E-mail vérifié et enregistré."})
+                if not driver or not driver.get("recovery_email_verified") or driver.get("recovery_email") != recovery["email"]:
+                    return self.sendj({"error": "Code invalide ou expiré."}, 400)
+                pin_hash,pin_salt=hash_pin(pin)
+                conn.execute("UPDATE drivers SET pin_hash=%s,pin_salt=%s,pin_reset_at=%s,online=FALSE WHERE id=%s", (pin_hash,pin_salt,time.time(),driver["id"]))
+                conn.execute("DELETE FROM driver_email_recoveries WHERE driver_id=%s", (driver["id"],))
+            return self.sendj({"ok": True,"message": "Votre PIN a été changé. Reconnectez-vous avec votre nouveau PIN."})
+
         if path == "/api/driver/application/login":
             phone = normalize_phone(data.get("phone"), data.get("phone_region", "SN"))
             if not self.check_rate("driver-login", 8, 600, phone or "invalid"):
@@ -3760,6 +3892,11 @@ class App(SimpleHTTPRequestHandler):
                 except ValueError as exc:
                     return self.sendj({"error": str(exc)}, 400)
 
+            email_proof = None
+            if data.get("recovery_email_token"):
+                email_proof = read_token_value(data["recovery_email_token"])
+                if not email_proof or email_proof.get("role") != "verified_recovery_email" or email_proof.get("driver_id") != phone or not valid_recovery_email(email_proof.get("name")):
+                    return self.sendj({"error": "Vérifiez à nouveau votre e-mail de secours."}, 400)
             pin_hash, pin_salt = hash_pin(pin)
 
             driver_id = (
@@ -3843,6 +3980,8 @@ class App(SimpleHTTPRequestHandler):
 
                     if data.get("mobile_registration") is True:
                         conn.execute("UPDATE drivers SET mobile_documents_required=TRUE WHERE id=%s", (driver_id,))
+                    if email_proof:
+                        conn.execute("UPDATE drivers SET recovery_email=%s,recovery_email_verified=TRUE WHERE id=%s", (email_proof["name"],driver_id))
 
             except psycopg.errors.UniqueViolation:
                 return self.sendj(
