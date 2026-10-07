@@ -43,7 +43,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v47-local-reference-26km"
+APP_VERSION = "2026.10.07-v48-local-road-routing"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -799,6 +799,13 @@ def local_quote(service_code, pickup, destination):
     }
     if travel_mode == "DRIVE":
         payload["routingPreference"] = "TRAFFIC_AWARE"
+    if {local_place_name(pickup), local_place_name(destination)} == {"Moudéry", "Bakel"}:
+        # The local road through Diawara is 25.9 km; automatic fastest routing
+        # otherwise takes the 39.4 km N2 detour. Use the verified local road
+        # in both directions and let Google compute its distance and duration.
+        via = geocode_senegal("Diawara")
+        payload["intermediates"] = [{"location": {"latLng": {
+            "latitude": via["lat"], "longitude": via["lng"]}}}]
     req = Request(
         "https://routes.googleapis.com/directions/v2:computeRoutes",
         json.dumps(payload).encode(),

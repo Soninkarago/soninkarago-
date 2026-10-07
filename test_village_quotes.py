@@ -20,9 +20,15 @@ class VillageQuotes(unittest.TestCase):
     def quote(self, service, pickup='Moudéry', destination='Bondy', km=17.1):
         def geocode(name):
             return {'address': name + ', Sénégal', 'lat': 15.05, 'lng': -12.59}
-        with patch.object(server, 'geocode_senegal', side_effect=geocode) as geocoding, patch.object(server, 'reverse_geocode_senegal', side_effect=RuntimeError('unavailable')), patch.object(server, 'urlopen', return_value=io.BytesIO(json.dumps({'routes':[{'distanceMeters':round(km*1000),'duration':'1920s'}]}).encode())):
+        with patch.object(server, 'geocode_senegal', side_effect=geocode) as geocoding, patch.object(server, 'reverse_geocode_senegal', side_effect=RuntimeError('unavailable')), patch.object(server, 'urlopen', return_value=io.BytesIO(json.dumps({'routes':[{'distanceMeters':round(km*1000),'duration':'1920s'}]}).encode())) as routing:
             quote, token = server.local_quote(service, pickup, destination)
             self.assertEqual(geocoding.call_args_list[1].args[0], server.local_place_name(destination))
+            payload = json.loads(routing.call_args.args[0].data)
+            if {server.local_place_name(pickup),server.local_place_name(destination)} == {'Moudéry','Bakel'}:
+                self.assertEqual(geocoding.call_args_list[2].args[0],'Diawara')
+                self.assertEqual(len(payload['intermediates']),1)
+            else:
+                self.assertNotIn('intermediates',payload)
             self.assertEqual(server.verify_local_quote(token, service), quote)
             return quote, token
 
