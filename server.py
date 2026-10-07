@@ -43,7 +43,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v41-village-quotes"
+APP_VERSION = "2026.10.07-v42-tricycle-distance"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -703,8 +703,8 @@ LOCAL_SERVICE_CONFIG = {
     },
     "local_tricycle": {
         "service": "3 roues",
-        "label": "3 roues — villages et petites localités",
-        "max_km": 35,
+        "label": "3 roues — proximité (8 km maximum)",
+        "max_km": 8,
     },
     "local_taxi": {
         "service": "Voiture taxi",
@@ -734,7 +734,7 @@ def local_fare(service_code, km):
         return 3000  # jusqu'à 35 km (limite du service)
 
     if service_code == "local_tricycle":
-        # 3 roues : déplacements locaux et liaisons entre villages jusqu’à 35 km.
+        # 3 roues : proximité uniquement, jusqu’à 8 km.
         if km <= 2:
             return 500
         if km <= 4:
@@ -804,6 +804,8 @@ def local_quote(service_code, pickup, destination):
     if km < .1:
         raise ValueError("Vérifiez le départ et la destination.")
     if km > float(config["max_km"]):
+        if service_code == "local_tricycle":
+            raise ValueError("Les 3 roues sont limités aux trajets de proximité de 8 km maximum. Choisissez Moto-taxi ou Taxi local pour ce trajet.")
         raise ValueError(
             "Ce trajet dépasse la distance prévue pour ce service local. Choisissez un autre service SoninkaraGo."
         )
