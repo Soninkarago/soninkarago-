@@ -6,7 +6,7 @@ from unittest.mock import patch
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 from PIL import Image
-import server,booking_requests,journey_experience as journey,journey_support as support,journey_chat as chat
+import server,passenger_history,booking_requests,journey_experience as journey,journey_support as support,journey_chat as chat
 
 class JourneyHTTP(unittest.TestCase):
  def setUp(self):
@@ -14,7 +14,7 @@ class JourneyHTTP(unittest.TestCase):
   columns=re.search(r'INSERT INTO rides\((.*?)\)\s*VALUES',Path(server.__file__).read_text(),re.S).group(1)
   with sqlite3.connect(self.path) as c:
    c.execute('CREATE TABLE rides('+','.join(n.strip()+' TEXT' for n in columns.split(','))+',driver_id TEXT,offered_driver_id TEXT,offer_expires_at BIGINT,driver_lat REAL,driver_lng REAL,driver_location_at BIGINT,eta_seconds INT,eta_calculated_at BIGINT,eta_driver_location_at BIGINT,eta_distance_meters INT)')
-   for schema in journey.SCHEMAS+(support.SCHEMA,support.REQUEST_SCHEMA,chat.SCHEMA,booking_requests.SCHEMA):c.execute(schema)
+   for schema in passenger_history.SCHEMAS+journey.SCHEMAS+(support.SCHEMA,support.REQUEST_SCHEMA,chat.SCHEMA,booking_requests.SCHEMA):c.execute(schema)
    c.execute('CREATE TABLE support_requests(id TEXT PRIMARY KEY,ride_id TEXT,phone TEXT,category TEXT,message TEXT,status TEXT,created_at BIGINT)')
    c.execute('CREATE TABLE drivers(id TEXT PRIMARY KEY,name TEXT,phone TEXT,status TEXT,vehicle TEXT,vehicle_plate TEXT,balance INT,compliance_verified BOOLEAN,driving_licence_number TEXT,driving_licence_expiry TEXT,insurance_policy_number TEXT,insurance_expiry TEXT,registration_card_number TEXT)')
    c.execute("INSERT INTO drivers VALUES('D','Chauffeur fictif','770000001','approved','Moto-taxi','TEST-123',10000,TRUE,'P','2099-01-01','I','2099-01-01','C')")
@@ -35,7 +35,7 @@ class JourneyHTTP(unittest.TestCase):
   self.db=db
   def auth(app):return {'role':app.headers.get('X-Test-Role','driver'),'driver_id':app.headers.get('X-Test-Driver','D'),'name':'Chauffeur fictif'}
   def assign(conn,ride_id):conn.execute('UPDATE rides SET offered_driver_id=%s,offer_expires_at=%s WHERE id=%s',('D',int(time.time())+60,ride_id));return 'D'
-  for p in (patch.object(server,'db',db),patch.object(server.App,'auth',auth),patch.object(server.App,'check_rate',return_value=True),patch.object(server.App,'log_message'),patch.object(server,'assign_next_driver',side_effect=assign),patch.object(server,'verify_local_quote',return_value={'pickup':'Moudéry','destination':'Bakel','fare':3000,'lat':14.7,'lng':-17.4,'route_polyline':'_p~iF~ps|U_ulLnnqC_mqNvxq`@','stops':[]}),patch.object(server,'audit_event')):p.start();self.addCleanup(p.stop)
+  for p in (patch.object(server,'AUTH_SECRET','isolated-http-test-only'),patch.object(server,'db',db),patch.object(server.App,'auth',auth),patch.object(server.App,'check_rate',return_value=True),patch.object(server.App,'log_message'),patch.object(server,'assign_next_driver',side_effect=assign),patch.object(server,'verify_local_quote',return_value={'pickup':'Moudéry','destination':'Bakel','fare':3000,'lat':14.7,'lng':-17.4,'route_polyline':'_p~iF~ps|U_ulLnnqC_mqNvxq`@','stops':[]}),patch.object(server,'audit_event')):p.start();self.addCleanup(p.stop)
   self.http=server.ThreadingHTTPServer(('127.0.0.1',0),server.App);self.thread=threading.Thread(target=self.http.serve_forever,daemon=True);self.thread.start()
   self.addCleanup(self.stop)
  def stop(self):self.http.shutdown();self.http.server_close();self.thread.join()
@@ -54,6 +54,8 @@ class JourneyHTTP(unittest.TestCase):
   self.profile()
   payload={'request_key':'K'*43,'route_code':'local_moto','quote_token':'signed-test','pickup_code_enabled':True,'journey_features':True,'client_name':'Client fictif','phone':'770000000','payment':'Espèces','terms_accepted':True,'privacy_accepted':True}
   status,ride=self.call('/api/rides',payload);self.assertEqual(status,201);ref=ride['id'];token=ride['tracking_token'];url='/api/rides/'+ref
+  status,vault=self.call('/api/passenger/history/create',{'request_key':'H'*43,'consent':True});self.assertEqual(status,200);history_key=vault['recovery_key']
+  self.assertEqual(self.call('/api/passenger/history/link',{'recovery_key':history_key,'ride_id':ref,'tracking_token':token})[0],200)
   status,replay=self.call('/api/rides',payload);self.assertEqual(status,200);self.assertEqual(replay['id'],ref)
   self.assertEqual(self.call(url+'/accept',{})[0],409) # old client cannot accept a protected course
   self.assertEqual(self.call(url+'/accept',{'pickup_code_supported':True})[0],200)
@@ -67,6 +69,9 @@ class JourneyHTTP(unittest.TestCase):
   self.assertEqual(self.call(url+'/start',{'code':code})[0],200);self.assertTrue(self.call(url+'/start',{'code':code})[1]['already_started'])
   self.assertEqual(self.call(url+'/location/driver',{'lat':14.7,'lng':-17.4})[0],200)
   self.assertEqual(self.call(url+'/complete',{})[0],200);self.assertEqual(self.call(shared)[0],410)
+  status,history=self.call('/api/passenger/history/list',{'recovery_key':history_key});self.assertEqual(status,200);self.assertEqual(history['rides'][0]['id'],ref);self.assertNotIn(token,str(history))
+  self.assertEqual(self.call('/api/passenger/history/list',{'recovery_key':'f'*64})[0],401)
+  self.assertEqual(self.call('/api/passenger/history/delete',{'recovery_key':history_key})[0],200)
   self.assertEqual(self.call(url+'/rate',{'tracking_token':'wrong','stars':5})[0],401)
   rating={'tracking_token':token,'stars':5,'comment':'Test isolé'};self.assertEqual(self.call(url+'/rate',rating)[0],200);self.assertEqual(self.call(url+'/rate',rating)[0],200)
   request={'ride_id':ref,'tracking_token':token,'category':'app','message':'Demande de test isolée','request_id':'S'*32}

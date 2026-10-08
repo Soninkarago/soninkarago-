@@ -47,6 +47,18 @@ class NativeNotifications(unittest.TestCase):
  def test_expired_or_revoked_binding_never_sends(self):
   self.bind();self.c.execute("UPDATE rides SET status='completed'");self.c.execute('UPDATE journey_push_subscriptions SET expires_at=0')
   with patch.object(n,'expo_call') as send:n.tick(self.db);send.assert_not_called()
+ def test_renewal_of_expired_or_revoked_subscription_does_not_replay(self):
+  for revoked in (False,True):
+   self.bind();self.c.execute("UPDATE rides SET status='accepted'")
+   self.c.execute('UPDATE journey_push_subscriptions SET expires_at=0,revoked=?',(revoked,))
+   self.assertEqual(self.bind()[0],200)
+   with patch.object(n,'expo_call') as send:n.tick(self.db);send.assert_not_called()
+   self.c.execute("UPDATE rides SET status='in_progress'")
+ def test_active_renewal_preserves_a_pending_new_event(self):
+  self.bind();self.c.execute("UPDATE rides SET status='completed'");self.bind()
+  with patch.object(n,'expo_call',return_value={'data':{'status':'ok','id':'ticket'}}) as send:
+   n.tick(self.db);self.assertEqual(send.call_count,1)
+   data=send.call_args.args[1]['data'];self.assertNotIn('owner_id',data);self.assertTrue(data['scope_id'].startswith('P-'));self.assertGreater(data['expires_at'],time.time());self.assertNotIn('private-token',str(data))
  def test_gateway_handoff_does_not_claim_phone_received(self):
   self.bind();self.c.execute("UPDATE rides SET status='completed'")
   with patch.object(n,'expo_call',return_value={'data':{'status':'ok','id':'ticket'}}):n.tick(self.db)

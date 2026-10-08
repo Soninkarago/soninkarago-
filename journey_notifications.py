@@ -30,9 +30,10 @@ def handle_post(app,path,data,db):
    conn.execute('UPDATE journey_push_subscriptions SET revoked=TRUE WHERE kind=%s AND owner_id=%s AND push_token=%s',(kind,owner,token))
   elif data.get('enabled') is True:
    if kind=='driver':conn.execute("UPDATE journey_push_subscriptions SET revoked=TRUE WHERE kind='driver' AND push_token=%s AND owner_id<>%s",(token,owner))
-   conn.execute('''INSERT INTO journey_push_subscriptions(id,kind,owner_id,push_token,expires_at,last_event) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(kind,owner_id,push_token) DO UPDATE SET expires_at=EXCLUDED.expires_at,revoked=FALSE''',('P-'+secrets.token_hex(16),kind,owner,token,expires,event))
+   conn.execute('''INSERT INTO journey_push_subscriptions(id,kind,owner_id,push_token,expires_at,last_event) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(kind,owner_id,push_token) DO UPDATE SET last_event=CASE WHEN journey_push_subscriptions.revoked=TRUE OR journey_push_subscriptions.expires_at<=%s THEN EXCLUDED.last_event ELSE journey_push_subscriptions.last_event END,expires_at=EXCLUDED.expires_at,revoked=FALSE''',('P-'+secrets.token_hex(16),kind,owner,token,expires,event,int(time.time())))
   else:app.sendj({'error':'Choisissez activer ou désactiver.'},400);return True
- app.sendj({'ok':True});return True
+  binding=conn.execute('SELECT id FROM journey_push_subscriptions WHERE kind=%s AND owner_id=%s AND push_token=%s',(kind,owner,token)).fetchone()
+ app.sendj({'ok':True,'scope_id':binding['id'] if binding else None,'expires_at':expires if data.get('enabled') is True else None,'delivery_confirmed':False});return True
 
 def expo_call(endpoint,payload):
  request=Request('https://exp.host/--/api/v2/push/'+endpoint,json.dumps(payload).encode(),headers={'Content-Type':'application/json','Accept':'application/json',**({'Authorization':'Bearer '+os.environ['EXPO_ACCESS_TOKEN']} if os.environ.get('EXPO_ACCESS_TOKEN') else {})},method='POST')
@@ -78,7 +79,7 @@ def tick(db):
     conn.execute("UPDATE journey_push_deliveries SET status='obsolete' WHERE id=%s",(event_id,));continue
    event=latest
   try:
-   result=expo_call('send',{'to':sub['push_token'],'title':'SoninkaraGo','body':event[1],'sound':'default','ttl':event[2],'collapseId':sub['id'],'tag':sub['id'],'data':{'screen':'driver' if sub['kind']=='driver' else 'client'}})
+   result=expo_call('send',{'to':sub['push_token'],'title':'SoninkaraGo','body':event[1],'sound':'default','ttl':event[2],'collapseId':sub['id'],'tag':sub['id'],'data':{'screen':'driver' if sub['kind']=='driver' else 'client','scope_id':sub['id'],'event':event_id,'expires_at':int(time.time())+event[2]}})
    ticket=result.get('data') or {};status='ticketed' if ticket.get('status')=='ok' and ticket.get('id') else 'failed';error=str((ticket.get('details') or {}).get('error') or '')[:80]
    with db() as conn:
     conn.execute('UPDATE journey_push_deliveries SET status=%s,ticket_id=%s,error=%s WHERE id=%s',(status,ticket.get('id'),error,event_id))

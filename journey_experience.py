@@ -39,7 +39,7 @@ def trust_fields(conn,ride):
     recovered={**dict(route),'stops':json.loads(route['stops'])} if route else {}
     return {**recovered,'pickup_code':code['code'] if code and ride.get('status') in ('searching','offered','accepted','arriving') else None,
             'pickup_verified':bool(code and code.get('verified_at')),
-            'driver_profile':{k:profile[k] for k in ('make','model','color','plate','portrait','vehicle_photo')} if profile and ride.get('status') in ACTIVE else None,
+            'driver_profile':{k:profile[k] for k in ('make','model','color','plate','portrait','vehicle_photo','updated_at')} if profile and ride.get('status') in ACTIVE else None,
             'driver_rating':round(float(rating['average']),1) if rating and rating['average'] is not None else None,
             'driver_rating_count':int(rating['count']) if rating else 0}
 

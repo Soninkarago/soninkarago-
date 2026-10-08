@@ -31,7 +31,11 @@ class AssistantTests(unittest.TestCase):
  def test_emergency_not_dispatched(self):
   _,r=self.ask({'topic':'emergency'});self.assertIn('1515',r['answer']);self.assertFalse(r['request_created'])
  def test_law_is_not_a_legal_decision(self):
-  _,r=self.ask({'topic':'legal'});self.assertTrue(r['requires_human']);self.assertIn('ne tranche pas',r['answer'])
+  _,r=self.ask({'topic':'legal'});self.assertTrue(r['requires_human']);self.assertIn('ne décide pas',r['answer']);self.assertEqual(r['sources'][0]['authority'],'Commission de protection des Données Personnelles (Sénégal)')
+ def test_expired_law_summary_fails_closed(self):
+  with patch.object(a,'date') as clock:
+   clock.today.return_value.isoformat.return_value='2027-02-01'
+   _,r=self.ask({'topic':'legal'});self.assertTrue(r['sources_need_review']);self.assertIn('vérifiée à nouveau',r['answer']);self.assertNotIn('droits d’accès',r['answer'])
  def test_real_adapter_rejects_invented_text(self):
   class Response:
    def __enter__(self):return self

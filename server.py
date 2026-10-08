@@ -1,5 +1,6 @@
 import journey_assistant
 import journey_chat
+import passenger_history
 import journey_support
 import journey_notifications
 import journey_events
@@ -54,7 +55,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.08-v67-journal-local-cleanup"
+APP_VERSION = "2026.10.08-v68-private-history-help"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -1776,6 +1777,8 @@ def db():
 def init():
     with db() as conn:
         conn.execute(journey_chat.SCHEMA)
+        for schema in passenger_history.SCHEMAS:
+            conn.execute(schema)
         conn.execute(journey_support.SCHEMA)
         conn.execute(journey_support.REQUEST_SCHEMA)
         for schema in journey_notifications.SCHEMAS:
@@ -2914,13 +2917,13 @@ class App(SimpleHTTPRequestHandler):
             return self.serve_index()
         if path == "/paiement/succes":
             return self.send_html(
-                "Paiement réussi",
-                "Votre paiement a bien été reçu. La mise à jour sera effectuée automatiquement."
+                "Retour du paiement",
+                "La page de paiement est terminée. Ce retour ne confirme pas le paiement : consultez son état dans votre course."
             )
         if path == "/paiement/annule":
             return self.send_html(
-                "Paiement annulé",
-                "Le paiement n'a pas été effectué. Vous pouvez revenir à l'accueil et réessayer."
+                "Retour après annulation",
+                "Une annulation a été demandée sur la page de paiement. Vérifiez l’état de votre course avant de recommencer un paiement."
             )
         static_pages = {
             "/confidentialite": "confidentialite.html",
@@ -3602,6 +3605,8 @@ class App(SimpleHTTPRequestHandler):
         if path != "/api/paytech/ipn" and not self.same_origin_request():
             return
         if journey_assistant.handle_post(self,path,data,db):
+            return
+        if passenger_history.handle_post(self,path,data,db,AUTH_SECRET):
             return
         if journey_chat.handle_post(self,path,data,db):
             return
