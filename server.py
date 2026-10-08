@@ -44,7 +44,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v55-route-preview"
+APP_VERSION = "2026.10.08-v56-driver-safety"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -1424,6 +1424,18 @@ def validate_application_details(data, vehicle):
     return details
 
 
+
+def driver_can_receive_rides(driver):
+    """Check current approval and document validity before assigning a new ride."""
+    if not driver or driver.get("status") != "approved" or not driver.get("compliance_verified"):
+        return False
+    try:
+        validate_application_details(driver, driver.get("vehicle"))
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
 def validate_driver_document(data):
     kind = data.get("kind")
     encoded = data.get("content_base64")
@@ -2163,7 +2175,7 @@ def assign_next_driver(conn, ride_id, now=None):
 
     drivers = conn.execute(
         """
-        SELECT d.id, d.latitude, d.longitude
+        SELECT d.*
         FROM drivers d
         WHERE d.status='approved'
           AND d.online=TRUE
@@ -2175,7 +2187,7 @@ def assign_next_driver(conn, ride_id, now=None):
           AND NOT EXISTS (
               SELECT 1 FROM rides active
               WHERE active.driver_id=d.id
-                AND active.status='accepted'
+                AND active.status IN ('accepted','arriving','in_progress','deposit_paid','fully_paid')
           )
         """,
         (ride["vehicle"], now - 300, int(ride["fee"] or 0))
@@ -2190,7 +2202,7 @@ def assign_next_driver(conn, ride_id, now=None):
 
     eligible = [
         driver for driver in drivers
-        if driver["id"] not in attempted
+        if driver_can_receive_rides(driver) and driver["id"] not in attempted
         and (
             (not urban_zone_code and not local_route)
             or (local_route and distance_km(
@@ -2441,8 +2453,10 @@ class App(SimpleHTTPRequestHandler):
                 return None
         if user and user.get("role") in ("driver", "driver_application"):
             with db() as conn:
-                driver = conn.execute("SELECT pin_reset_at FROM drivers WHERE id=%s", (user.get("driver_id"),)).fetchone()
-            if driver and float(user.get("issued_at", 0)) <= float(driver.get("pin_reset_at") or 0) and driver.get("pin_reset_at"):
+                driver = conn.execute("SELECT pin_reset_at, status FROM drivers WHERE id=%s", (user.get("driver_id"),)).fetchone()
+            if not driver or (user.get("role") == "driver" and driver.get("status") != "approved"):
+                return None
+            if float(user.get("issued_at", 0)) <= float(driver.get("pin_reset_at") or 0) and driver.get("pin_reset_at"):
                 return None
         return user
 
@@ -3330,18 +3344,18 @@ class App(SimpleHTTPRequestHandler):
                 zone_code = quote["zone"]
                 with db() as conn:
                     available = conn.execute("""
-                        SELECT latitude, longitude FROM drivers
+                        SELECT * FROM drivers
                         WHERE status='approved' AND online=TRUE AND vehicle='Voiture taxi'
                           AND latitude IS NOT NULL AND longitude IS NOT NULL
                           AND last_location_at >= %s
                           AND balance >= %s
                           AND NOT EXISTS (
                               SELECT 1 FROM rides r
-                              WHERE r.driver_id=drivers.id AND r.status='accepted'
+                              WHERE r.driver_id=drivers.id AND r.status IN ('accepted','arriving','in_progress','deposit_paid','fully_paid')
                           )
                     """, (int(time.time()) - 300, (quote["fare"] + 9) // 10)).fetchall()
                 available = sum(
-                    in_urban_service_zone(
+                    driver_can_receive_rides(d) and in_urban_service_zone(
                         zone_code, d["latitude"], d["longitude"]
                     )
                     and distance_km(
@@ -3397,18 +3411,18 @@ class App(SimpleHTTPRequestHandler):
                 vehicle = LOCAL_SERVICE_CONFIG[service_code]["service"]
                 with db() as conn:
                     available = conn.execute("""
-                        SELECT latitude, longitude FROM drivers
+                        SELECT * FROM drivers
                         WHERE status='approved' AND online=TRUE AND vehicle=%s
                           AND latitude IS NOT NULL AND longitude IS NOT NULL
                           AND last_location_at >= %s
                           AND balance >= %s
                           AND NOT EXISTS (
                               SELECT 1 FROM rides r
-                              WHERE r.driver_id=drivers.id AND r.status='accepted'
+                              WHERE r.driver_id=drivers.id AND r.status IN ('accepted','arriving','in_progress','deposit_paid','fully_paid')
                           )
                     """, (vehicle, int(time.time()) - 300, (quote["fare"] + 9) // 10)).fetchall()
                 available = sum(
-                    distance_km(
+                    driver_can_receive_rides(d) and distance_km(
                         quote["lat"], quote["lng"],
                         d["latitude"], d["longitude"]
                     ) <= 20
@@ -4704,14 +4718,14 @@ class App(SimpleHTTPRequestHandler):
                 urban_zone_code = quote.get("zone", "dakar")
                 with db() as conn:
                     nearby = conn.execute("""
-                        SELECT latitude, longitude FROM drivers
+                        SELECT * FROM drivers
                         WHERE status='approved' AND online=TRUE AND vehicle='Voiture taxi'
                           AND latitude IS NOT NULL AND longitude IS NOT NULL
                           AND last_location_at >= %s AND balance >= %s
-                          AND NOT EXISTS (SELECT 1 FROM rides r WHERE r.driver_id=drivers.id AND r.status='accepted')
+                          AND NOT EXISTS (SELECT 1 FROM rides r WHERE r.driver_id=drivers.id AND r.status IN ('accepted','arriving','in_progress','deposit_paid','fully_paid'))
                     """, (int(time.time()) - 300, fee)).fetchall()
                 driver_available = any(
-                    in_urban_service_zone(urban_zone_code, d["latitude"], d["longitude"])
+                    driver_can_receive_rides(d) and in_urban_service_zone(urban_zone_code, d["latitude"], d["longitude"])
                     and distance_km(client_lat, client_lng, d["latitude"], d["longitude"]) <= 20
                     for d in nearby
                 )
@@ -4952,7 +4966,7 @@ class App(SimpleHTTPRequestHandler):
 
                 driver = conn.execute(
                     """
-                    SELECT balance, vehicle
+                    SELECT *
                     FROM drivers
                     WHERE id=%s
                     FOR UPDATE
@@ -4969,6 +4983,15 @@ class App(SimpleHTTPRequestHandler):
                         {"error": "Cette course ne correspond pas à votre véhicule."},
                         409
                     )
+
+                if not driver_can_receive_rides(driver):
+                    return self.sendj({"error": "Votre dossier doit être validé et vos documents en cours de validité pour accepter une course."}, 409)
+                active_ride = conn.execute(
+                    "SELECT id FROM rides WHERE driver_id=%s AND status IN ('accepted','arriving','in_progress','deposit_paid','fully_paid') LIMIT 1",
+                    (driver_id,)
+                ).fetchone()
+                if active_ride:
+                    return self.sendj({"error": "Terminez votre course en cours avant d’en accepter une autre."}, 409)
 
                 if balance < commission:
                     return self.sendj(
