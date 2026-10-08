@@ -1,3 +1,4 @@
+import journey_assistant
 import journey_chat
 import journey_support
 import journey_notifications
@@ -52,7 +53,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.08-v65-journey-trust"
+APP_VERSION = "2026.10.08-v66-assistant-ready"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -2880,6 +2881,8 @@ class App(SimpleHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        if journey_assistant.handle_get(self,path,db):
+            return
         if journey_chat.handle_get(self,path,db):
             return
         if journey_support.handle_get(self,path,db):
@@ -3593,6 +3596,8 @@ class App(SimpleHTTPRequestHandler):
         if data is None:
             return
         if path != "/api/paytech/ipn" and not self.same_origin_request():
+            return
+        if journey_assistant.handle_post(self,path,data,db):
             return
         if journey_chat.handle_post(self,path,data,db):
             return
