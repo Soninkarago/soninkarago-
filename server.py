@@ -1,3 +1,4 @@
+import booking_requests
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse, urlencode
 from urllib.request import Request, urlopen
@@ -46,7 +47,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.08-v60-deep-audit"
+APP_VERSION = "2026.10.08-v61-booking-recovery"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -1720,12 +1721,15 @@ def driver_expiry_alerts(driver, today=None):
 def db():
     return psycopg.connect(
         DATABASE_URL,
-        row_factory=dict_row
+        row_factory=dict_row,
+        connect_timeout=10,
+        options="-c statement_timeout=20000 -c lock_timeout=5000 -c idle_in_transaction_session_timeout=60000"
     )
 
 
 def init():
     with db() as conn:
+        conn.execute(booking_requests.SCHEMA)
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS rides(
@@ -2775,6 +2779,11 @@ class App(SimpleHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if path == "/api/booking/key":
+            if not self.check_rate("booking-key", 60, 3600):
+                return
+            return self.sendj({"request_key": secrets.token_urlsafe(32)})
 
         if path == "/api/push/public-key":
             return self.sendj({"public_key": VAPID_PUBLIC_KEY, "configured": bool(VAPID_PUBLIC_KEY)})
@@ -4897,6 +4906,17 @@ class App(SimpleHTTPRequestHandler):
 
               # CRÉATION COURSE CLIENT
         if path == "/api/rides":
+            if data.get("request_key") is not None and not self.check_rate("booking-retry", 60, 60):
+                return
+            try:
+                booking_request = booking_requests.identity(data)
+                if booking_request is not None:
+                    with db() as conn:
+                        replay = booking_requests.lookup(conn, booking_request)
+                    if replay is not None:
+                        return self.sendj(replay, 200)
+            except (ValueError, TypeError):
+                return self.sendj({"error": "Référence de commande invalide ou différente de la commande initiale."}, 409)
 
             if not self.check_rate(
                 "ride-create", 30, 3600, str(data.get("phone", ""))
@@ -5081,8 +5101,23 @@ class App(SimpleHTTPRequestHandler):
             initial_status = "awaiting_payment" if mobile_payment else "searching"
             initial_payment_status = "unpaid"
 
+            response = {
+                "id": ride_id, "pickup": route["pickup"], "destination": route["destination"],
+                "vehicle": route["service"], "fare": fare, "fee": fee,
+                "status": initial_status, "payment_status": initial_payment_status,
+                "deposit_amount": deposit_amount, "balance_due": balance_due,
+                "tracking_token": tracking_token,
+            }
+            if mobile_payment:
+                response["payment_initialization_pending"] = True
             assigned_driver = None
             with db() as conn:
+                try:
+                    replay = booking_requests.claim(conn, booking_request, response)
+                except ValueError:
+                    return self.sendj({"error": "Cette référence appartient à une autre commande."}, 409)
+                if replay is not None:
+                    return self.sendj(replay, 200)
                 conn.execute(
                     """
                     INSERT INTO rides(
@@ -5161,20 +5196,6 @@ class App(SimpleHTTPRequestHandler):
                 if not mobile_payment:
                     assigned_driver = assign_next_driver(conn, ride_id)
 
-            response = {
-                    "id": ride_id,
-                    "pickup": route["pickup"],
-                    "destination": route["destination"],
-                    "vehicle": route["service"],
-                    "fare": fare,
-                    "fee": fee,
-                    "status": initial_status,
-                    "payment_status": initial_payment_status,
-                    "deposit_amount": deposit_amount,
-                    "balance_due": balance_due,
-                    "tracking_token": tracking_token
-                }
-
             if not mobile_payment and not is_minicar:
                 response["dispatch_status"] = (
                     "offered" if assigned_driver else "waiting_for_driver"
@@ -5198,9 +5219,15 @@ class App(SimpleHTTPRequestHandler):
                         )
                     # The reservation already exists. Return its tracking token
                     # so the mobile client can recover/cancel rather than duplicate it.
+                    response.pop("payment_initialization_pending", None)
                     response.update(status="payment_failed", payment_status="failed", payment_error=str(exc))
+                    with db() as conn:
+                        booking_requests.finish(conn, booking_request, response)
                     return self.sendj(response, 201)
 
+            response.pop("payment_initialization_pending", None)
+            with db() as conn:
+                booking_requests.finish(conn, booking_request, response)
             return self.sendj(response, 201)
 
 

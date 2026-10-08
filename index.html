@@ -2063,7 +2063,45 @@ function getDispatchPosition(){
   });
 }
 
+let orderBusy=false;
+async function durableBooking(payload) {
+  const raw=localStorage.getItem('skg.pending.booking');
+  let pending=raw ? JSON.parse(raw) : null;
+  if(!pending){
+    const key=await get('/booking/key');
+    if(!/^[A-Za-z0-9_-]{32,128}$/.test(key.request_key||''))throw new Error('Référence de commande indisponible.');
+    pending={...payload,request_key:key.request_key};
+    localStorage.setItem('skg.pending.booking',JSON.stringify(pending));
+  }
+  try{
+    const ride=await post('/rides',pending);
+    if(!ride.id||!ride.tracking_token)throw new Error('Commande non confirmée. Reprenez la même commande.');
+    // Store tracking first: failure must keep the pending request intact.
+    localStorage.setItem('lastRide',ride.id);
+    localStorage.setItem('trackingToken',ride.tracking_token);
+    localStorage.removeItem('skg.pending.booking');
+    return ride;
+  }catch(error){
+    if(error.status && error.status<500 && error.status!==409)localStorage.removeItem('skg.pending.booking');
+    throw error;
+  }
+}
+async function resumeWebBooking(){
+  if(orderBusy)return;
+  orderBusy=true;$('#order').disabled=true;
+  try{
+    const r=await durableBooking();lastRide=r.id;trackingToken=r.tracking_token;
+    $('#orderSuccess').textContent='Commande retrouvée : '+r.id;
+    if(r.payment_url)window.location.href=r.payment_url;
+    else await refreshClient();
+  }catch(error){$('#orderError').textContent=error.message;}
+  finally{orderBusy=false;$('#order').disabled=false;}
+}
 $('#order').onclick=async()=>{
+if(orderBusy)return;
+if(localStorage.getItem('skg.pending.booking'))return resumeWebBooking();
+orderBusy=true;$('#order').disabled=true;
+
 
 $('#orderError').textContent='';
 $('#orderSuccess').textContent='';
@@ -2156,8 +2194,7 @@ if(bookingForValue==='other'){
 
 const localRide=isLocalRoute();
 
-const r=await post(
-'/rides',
+const r=await durableBooking(
 {
   client_name: rideClientName,
 
@@ -2271,7 +2308,7 @@ await refreshClient();
 
 $('#orderError').textContent=e.message;
 
-}
+}finally{orderBusy=false;$('#order').disabled=false;}
 };
 
 
@@ -3973,6 +4010,7 @@ refreshAdmin();
 
 
 restoreSession();
+if(localStorage.getItem('skg.pending.booking'))resumeWebBooking();
 
 updateFare();
 refreshClient();
