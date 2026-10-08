@@ -47,7 +47,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.08-v61-booking-recovery"
+APP_VERSION = "2026.10.08-v62-course-financial-sessions"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -466,8 +466,7 @@ def payment_event_once(conn, provider, event_key, reference, event_type, amount,
         return bool(row)
     except Exception as exc:
         print("Payment event register unavailable", flush=True)
-        # Existing state checks still protect against duplicate balance changes.
-        return True
+        raise RuntimeError("Payment journal unavailable") from exc
 
 
 def purge_old_operational_logs(conn):
@@ -475,7 +474,7 @@ def purge_old_operational_logs(conn):
     audit_cutoff = now - max(30, AUDIT_RETENTION_DAYS) * 86400
     security_cutoff = now - max(30, SECURITY_LOG_RETENTION_DAYS) * 86400
     conn.execute("DELETE FROM audit_events WHERE created_at < %s", (audit_cutoff,))
-    conn.execute("DELETE FROM payment_events WHERE created_at < %s", (security_cutoff,))
+    conn.execute("DELETE FROM payment_events WHERE created_at < %s", (now - 10*366*86400,))
 
 
 def now_ts():
@@ -2116,6 +2115,14 @@ def init():
             )
         """)
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS admin_sessions(
+                id TEXT PRIMARY KEY,
+                identity TEXT NOT NULL,
+                expires_at BIGINT NOT NULL,
+                revoked BOOLEAN NOT NULL DEFAULT FALSE
+            )
+        """)
+        conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_payment_events_reference
             ON payment_events(reference, created_at DESC)
         """)
@@ -2299,6 +2306,9 @@ def make_token(role, name="", driver_id=""):
         "driver_id": driver_id,
         "exp": int(time.time()) + (12 * 60 * 60)
     }
+    if role == "admin":
+        payload["exp"] = int(time.time()) + 1800
+        payload["session_id"] = uuid.uuid4().hex
 
     encoded = b64(
         json.dumps(
@@ -2738,13 +2748,34 @@ class App(SimpleHTTPRequestHandler):
                 user = read_token_value(morsel.value if morsel else "")
             except Exception:
                 return None
+        if user and user.get("role") == "admin":
+            if not user.get("session_id"):
+                return None
+            with db() as conn:
+                session = conn.execute("SELECT identity FROM admin_sessions WHERE id=%s AND revoked=FALSE AND expires_at>%s", (user["session_id"],int(time.time()))).fetchone()
+            if not session or session.get("identity") != user.get("name"):
+                return None
         if user and user.get("role") in ("driver", "driver_application"):
             with db() as conn:
                 driver = conn.execute("SELECT pin_reset_at, status FROM drivers WHERE id=%s", (user.get("driver_id"),)).fetchone()
-            if not driver or (user.get("role") == "driver" and driver.get("status") != "approved"):
+            if not driver:
                 return None
             if float(user.get("issued_at", 0)) <= float(driver.get("pin_reset_at") or 0) and driver.get("pin_reset_at"):
                 return None
+            if user.get("role") == "driver" and driver.get("status") != "approved":
+                # A restriction stops offers immediately, but must not strand an
+                # already assigned passenger. Only closure of that assignment is allowed.
+                path = urlparse(getattr(self, "path", "")).path
+                method = getattr(self, "command", "")
+                match = re.fullmatch(r"/api/rides/([^/]+)/(complete|confirm-deposit|confirm-balance|location/driver)", path)
+                allowed = (method == "GET" and path in ("/api/driver/me", "/api/rides")) or (method == "POST" and (match or path == "/api/driver/offline"))
+                if not allowed:
+                    return None
+                with db() as conn:
+                    active = conn.execute("SELECT id FROM rides WHERE driver_id=%s AND status IN ('accepted','arriving','in_progress','deposit_paid','fully_paid')" + (" AND id=%s" if match else "") + " LIMIT 1", (user.get("driver_id"), match.group(1)) if match else (user.get("driver_id"),)).fetchone()
+                if not active or not active.get("id"):
+                    return None
+                user = {**user, "restricted": True}
         return user
 
 
@@ -2811,6 +2842,8 @@ class App(SimpleHTTPRequestHandler):
         static_pages = {
             "/confidentialite": "confidentialite.html",
             "/conditions": "conditions.html",
+            "/legal/conditions/SN-2026-09-v2": "conditions-SN-2026-09-v2.html",
+            "/legal/confidentialite/SN-2026-09-v2": "confidentialite-SN-2026-09-v2.html",
             "/mentions-legales": "mentions-legales.html",
             "/suppression-compte": "suppression-compte.html",
             "/manifest.webmanifest": "manifest.webmanifest",
@@ -3078,6 +3111,11 @@ class App(SimpleHTTPRequestHandler):
                         """
                     ).fetchall()
 
+                elif user.get("restricted"):
+                    rows = conn.execute("SELECT id,client_name,pickup,destination,vehicle,payment,fare,fee,status,driver_name,created_at,offer_expires_at,payment_status,commission_charged,deposit_amount,balance_due,departure_date,departure_time,meeting_point,passenger_count,luggage,booking_note,client_lat,client_lng FROM rides WHERE driver_id=%s AND status IN ('accepted','arriving','in_progress','deposit_paid','fully_paid') ORDER BY created_at DESC", (user.get("driver_id"),)).fetchall()
+                    for row in rows:
+                        row.pop("tracking_token", None)
+                        row.pop("quote_token", None)
                 else:
                     dispatch_pending_rides(conn)
                     now = int(time.time())
@@ -3205,7 +3243,7 @@ class App(SimpleHTTPRequestHandler):
                     404
                 )
 
-            if driver["status"] != "approved":
+            if driver["status"] != "approved" and not user.get("restricted"):
                 return self.sendj({"error": "Compte chauffeur inactif"}, 403)
             return self.sendj({
                 "phone": driver["phone"],
@@ -3214,7 +3252,9 @@ class App(SimpleHTTPRequestHandler):
                 "name": driver["name"],
                 "vehicle": driver["vehicle"],
                 "village": driver["village"],
-                "online": bool(driver["online"]),
+                "online": bool(driver["online"]) and not user.get("restricted"),
+                "restricted": bool(user.get("restricted")),
+                "status": driver["status"],
                 "expiry_alerts": driver_expiry_alerts(driver),
                 "eligible_for_rides": driver_can_receive_rides(driver)
             })
@@ -3805,6 +3845,9 @@ class App(SimpleHTTPRequestHandler):
                 return self.sendj({"error": "Environnement IPN invalide"}, 409)
 
             event = str(data.get("type_event", "")).strip()
+            if event not in ("sale_complete", "sale_canceled"):
+                return self.sendj({"error": "Événement IPN inconnu"}, 400)
+            event_key = hashlib.sha256(f"{ref_command}|{event}|{effective_price}|{callback_env}".encode()).hexdigest()
 
             with db() as conn:
                 if ref_command.startswith("RECH-"):
@@ -3833,6 +3876,8 @@ class App(SimpleHTTPRequestHandler):
                         if recharge["status"] not in ("pending", "paid"):
                             audit_event(conn, "paytech", "", "payment.late", "recharge", ref_command, {"amount": paid_amount, "status": recharge["status"]}, outcome="manual_review")
                             return self.sendj({"error": "Recharge clôturée : paiement à vérifier manuellement."}, 409)
+                        if not payment_event_once(conn,"paytech",event_key,ref_command,event,paid_amount,{"env":callback_env,"currency":callback_currency}):
+                            return self.sendj({"ok":True,"duplicate":True})
                         if recharge["status"] == "pending":
                             conn.execute(
                                 """
@@ -3851,6 +3896,8 @@ class App(SimpleHTTPRequestHandler):
                                 (paid_amount, recharge["driver_id"])
                             )
                     elif event == "sale_canceled":
+                        if not payment_event_once(conn,"paytech",event_key,ref_command,event,paid_amount,{"env":callback_env,"currency":callback_currency}):
+                            return self.sendj({"ok":True,"duplicate":True})
                         conn.execute(
                             """
                             UPDATE driver_recharges
@@ -3887,6 +3934,8 @@ class App(SimpleHTTPRequestHandler):
                         return self.sendj({
                             "error": "Réservation annulée : paiement à vérifier manuellement."
                         }, 409)
+                    if not payment_event_once(conn,"paytech",event_key,ref_command,event,paid_amount,{"env":callback_env,"currency":callback_currency}):
+                        return self.sendj({"ok":True,"duplicate":True})
                     conn.execute(
                         """
                         UPDATE rides
@@ -3901,6 +3950,8 @@ class App(SimpleHTTPRequestHandler):
                     )
                     assign_next_driver(conn, ref_command)
                 elif event == "sale_canceled":
+                    if not payment_event_once(conn,"paytech",event_key,ref_command,event,paid_amount,{"env":callback_env,"currency":callback_currency}):
+                        return self.sendj({"ok":True,"duplicate":True})
                     conn.execute(
                         """
                         UPDATE rides
@@ -4048,6 +4099,11 @@ class App(SimpleHTTPRequestHandler):
             }, 201)
 
         if path == "/api/logout":
+            user = self.auth()
+            if user and user.get("role") == "admin":
+                with db() as conn:
+                    conn.execute("UPDATE admin_sessions SET revoked=TRUE WHERE id=%s", (user["session_id"],))
+                    audit_event(conn,"admin",user.get("name"),"admin.logout","session",user["session_id"])
             return self.sendj(
                 {"ok": True},
                 extra_headers=[("Set-Cookie", session_cookie(clear=True))]
@@ -4170,7 +4226,7 @@ class App(SimpleHTTPRequestHandler):
             legal_documents_declared = data.get("legal_documents_declared") is True
             terms_accepted = data.get("terms_accepted") is True
             privacy_accepted = data.get("privacy_accepted") is True
-            compliance_version = str(data.get("compliance_version", "SN-2026-09-v3"))[:50]
+            compliance_version = "SN-2026-09-v2"
 
             driving_licence_number = str(data.get("driving_licence_number", "")).strip()
             driving_licence_expiry = str(data.get("driving_licence_expiry", "")).strip()
@@ -4637,6 +4693,10 @@ class App(SimpleHTTPRequestHandler):
                 pass
 
             token = make_token("admin", "Admin")
+            session = read_token_value(token)
+            with db() as conn:
+                conn.execute("DELETE FROM admin_sessions WHERE expires_at<=%s", (int(time.time()),))
+                conn.execute("INSERT INTO admin_sessions(id,identity,expires_at) VALUES(%s,%s,%s)", (session["session_id"],session["name"],session["exp"]))
             response = {"authenticated": True, "name": "Admin"}
             if str(self.headers.get("X-SoninkaraGo-App", "")).lower() in ("ios", "android", "mobile"):
                 response["access_token"] = token
@@ -4872,7 +4932,7 @@ class App(SimpleHTTPRequestHandler):
                 cur = conn.execute(
                     """
                     UPDATE drivers
-                    SET status='rejected'
+                    SET status='rejected', online=FALSE, compliance_verified=FALSE
                     WHERE id=%s
                     """,
                     (driver_id,)
@@ -5190,7 +5250,7 @@ class App(SimpleHTTPRequestHandler):
                         int(time.time()),
                         int(time.time()),
                         int(time.time()) if data.get("location_consent") is True else None,
-                        str(data.get("compliance_version", "SN-2026-09-v3"))[:50]
+                        "SN-2026-09-v2"
                     )
                 )
                 if not mobile_payment:
@@ -5584,7 +5644,7 @@ class App(SimpleHTTPRequestHandler):
                         403
                     )
 
-                if ride["payment_status"] != "deposit_paid":
+                if ride["payment_status"] != "deposit_paid" or ride["status"] != "deposit_paid" or ride["vehicle"] != "Minicar 14 places":
                     return self.sendj(
                         {
                             "error":
@@ -5653,6 +5713,7 @@ class App(SimpleHTTPRequestHandler):
                           (
                               vehicle='Minicar 14 places'
                               AND payment_status='fully_paid'
+                              AND status='fully_paid'
                           )
                           OR
                           (
