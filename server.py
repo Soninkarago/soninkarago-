@@ -44,7 +44,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.07-v54-native-email-recovery"
+APP_VERSION = "2026.10.07-v55-route-preview"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -783,6 +783,8 @@ def urban_quote(zone_code, pickup, destination):
         "lng": origin["lng"],
         "distance_km": round(km, 1),
         "duration_min": minutes,
+        "route_polyline": (route.get("polyline") or {}).get("encodedPolyline", ""),
+        "destination_lat": arrival["lat"], "destination_lng": arrival["lng"],
         "fare": fare,
         "exp": calculated_at + URBAN_QUOTE_TTL,
         "calculated_at": calculated_at,
@@ -813,14 +815,14 @@ def dakar_quote(pickup, destination):
     return urban_quote("dakar", pickup, destination)
 
 
-def verify_signed_quote(token):
+def verify_signed_quote(token, preview=False):
     try:
         body, signature = token.split(".")
         expected = hmac.new(AUTH_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signature, expected):
             raise ValueError()
         quote = json.loads(b64decode(body))
-        if quote["exp"] < time.time():
+        if quote["exp"] < time.time() and not (preview and time.time()-int(quote.get("calculated_at", 0)) < 86400):
             raise ValueError()
         return quote
     except (ValueError, KeyError, TypeError, binascii.Error, UnicodeDecodeError):
@@ -978,7 +980,7 @@ def local_quote(service_code, pickup, destination):
         headers={
             "Content-Type": "application/json",
             "X-Goog-Api-Key": MAPS_API_KEY,
-            "X-Goog-FieldMask": "fallbackInfo,routes.distanceMeters,routes.duration",
+            "X-Goog-FieldMask": "fallbackInfo,routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline",
         },
         method="POST",
     )
@@ -1017,6 +1019,8 @@ def local_quote(service_code, pickup, destination):
         "lng": origin["lng"],
         "distance_km": round(km, 1),
         "duration_min": minutes,
+        "route_polyline": (route.get("polyline") or {}).get("encodedPolyline", ""),
+        "destination_lat": arrival["lat"], "destination_lng": arrival["lng"],
         "fare": fare,
         "exp": int(time.time()) + URBAN_QUOTE_TTL,
         "calculated_at": int(time.time()),
@@ -2723,6 +2727,8 @@ class App(SimpleHTTPRequestHandler):
                     else ""
                 ),
                 "driver_location_at": row.get("driver_location_at"),
+                "driver_lat": row.get("driver_lat") if driver_gps_fresh and row.get("status") in ("accepted", "arriving", "in_progress") else None,
+                "driver_lng": row.get("driver_lng") if driver_gps_fresh and row.get("status") in ("accepted", "arriving", "in_progress") else None,
                 "client_lat": row.get("client_lat"),
                 "client_lng": row.get("client_lng"),
                 "eta_seconds": eta_seconds,
@@ -3353,6 +3359,31 @@ class App(SimpleHTTPRequestHandler):
                 return self.sendj({"error": str(exc)}, 400)
             except RuntimeError as exc:
                 return self.sendj({"error": str(exc)}, 503)
+        if path == "/api/routes/preview":
+            if not self.check_rate("route-preview", 40, 3600):
+                return
+            try:
+                quote = verify_signed_quote(str(data.get("quote_token") or ""), preview=True)
+                encoded = str(quote.get("route_polyline") or "")
+                if not encoded or len(encoded) > 6000 or not MAPS_API_KEY:
+                    raise ValueError("Aperçu indisponible. Ouvrez le trajet dans Google Maps.")
+                params = {"size": "600x360", "scale": "2", "maptype": "roadmap", "language": "fr",
+                          "path": "color:0x0B7A55FF|weight:5|enc:" + encoded, "key": MAPS_API_KEY}
+                params["markers"] = "color:green|label:D|" + str(quote["lat"]) + "," + str(quote["lng"])
+                params_list = list(params.items())
+                if quote.get("destination_lat") is not None:
+                    params_list.append(("markers", "color:red|label:A|" + str(quote["destination_lat"]) + "," + str(quote["destination_lng"])))
+                url = "https://maps.googleapis.com/maps/api/staticmap?" + urlencode(params_list)
+                if len(url) > 16000:
+                    raise ValueError("Aperçu indisponible. Ouvrez le trajet dans Google Maps.")
+                with urlopen(Request(url), timeout=10) as response:
+                    content = response.read(2 * 1024 * 1024)
+                if not content.startswith(b"\x89PNG\r\n\x1a\n"):
+                    raise ValueError("Aperçu indisponible. Ouvrez le trajet dans Google Maps.")
+                return self.sendj({"image": "data:image/png;base64," + base64.b64encode(content).decode(), "source": "google_maps"})
+            except (ValueError, URLError, TimeoutError, KeyError):
+                return self.sendj({"error": "Aperçu indisponible. Ouvrez le trajet dans Google Maps."}, 503)
+
         if path == "/api/local/quote":
             if not self.check_rate("local-quote", 30, 3600):
                 return
