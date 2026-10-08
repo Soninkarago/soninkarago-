@@ -3,7 +3,7 @@ import json,os,re,time,threading,unicodedata
 from urllib.request import Request,build_opener,HTTPRedirectHandler
 from urllib.error import HTTPError
 GROQ_MODELS=('openai/gpt-oss-120b','openai/gpt-oss-20b')
-GEMINI_MODEL='gemini-2.5-flash'
+GEMINI_MODEL='gemini-3.5-flash-lite'
 _lock=threading.Lock();_cooldown={}
 
 def groq_ready():return bool(os.getenv('GROQ_API_KEY')) and os.getenv('ASSISTANT_FREE_ACCOUNT_CONFIRMED')=='yes' and os.getenv('ASSISTANT_ZDR_CONFIRMED')=='yes'
@@ -22,7 +22,7 @@ class NoRedirect(HTTPRedirectHandler):
 def google_select(question,topics,timeout):
  keywords=generic_topics(question)
  if not keywords:return 'unknown'
- payload={'contents':[{'parts':[{'text':'Choisis uniquement un identifiant parmi '+json.dumps(list(topics))+'. Si incertain: unknown. Mots-clés génériques : '+json.dumps(keywords)}]}], 'generationConfig':{'maxOutputTokens':64,'temperature':0,'thinkingConfig':{'thinkingBudget':0}}}
+ payload={'contents':[{'parts':[{'text':'Choisis uniquement un identifiant parmi '+json.dumps(list(topics))+'. Si incertain: unknown. Mots-clés génériques : '+json.dumps(keywords)}]}], 'generationConfig':{'maxOutputTokens':512,'temperature':0}}
  request=Request('https://generativelanguage.googleapis.com/v1beta/models/'+GEMINI_MODEL+':generateContent',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json','x-goog-api-key':os.environ['GEMINI_API_KEY']},method='POST')
  with build_opener(NoRedirect()).open(request,timeout=timeout) as response:
   raw=response.read(65537)

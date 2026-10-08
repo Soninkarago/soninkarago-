@@ -44,6 +44,7 @@ class FailoverTests(unittest.TestCase):
   with patch.object(f,'build_opener') as factory:
    factory.return_value.open.return_value=Response();self.assertEqual(f.google_select('Mamadou Diop 771234567 a payé ma course',{'fare','unknown'},4),'fare')
    body=json.loads(factory.return_value.open.call_args[0][0].data)
+   self.assertIn('/gemini-3.5-flash-lite:generateContent',factory.return_value.open.call_args[0][0].full_url);self.assertEqual(body['generationConfig']['maxOutputTokens'],512);self.assertNotIn('thinkingBudget',str(body));
    self.assertNotIn('Mamadou',str(body));self.assertNotIn('771234567',str(body));self.assertNotIn('tools',body)
  def test_no_google_call_without_generic_keywords(self):
   with patch.object(f,'build_opener') as opener:self.assertEqual(f.google_select('Mamadou Diop',{'unknown'},4),'unknown');opener.assert_not_called()
