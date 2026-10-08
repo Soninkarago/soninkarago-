@@ -959,6 +959,7 @@ Déconnexion
 <h2>Demandes chauffeurs</h2>
 
 <div id="adminAutomation" class="sub"></div>
+<div id="adminFinancialReview" class="sub" role="status"></div>
 <label for="adminDriverFilter">Afficher les dossiers</label>
 <select id="adminDriverFilter" onchange="refreshAdmin()">
 <option value="">Tous</option><option value="ready_for_review">Prêts à vérifier</option>
@@ -3228,14 +3229,15 @@ return;
 
 try{
 
-const [rs,s,drivers,audit,ads,adRates,automation]=await Promise.all([
+const [rs,s,drivers,audit,ads,adRates,automation,finance]=await Promise.all([
 get('/rides',adminToken),
 get('/stats',adminToken),
 get('/admin/drivers',adminToken),
 get('/admin/audit?limit=50',adminToken),
 get('/admin/ads',adminToken),
 get('/admin/ad-rates',adminToken),
-get('/admin/automation',adminToken)
+get('/admin/automation',adminToken),
+post('/admin/payments/reconciliation',{},adminToken)
 ]);
 
 $('#stats').innerHTML=
@@ -3250,7 +3252,9 @@ const counts=automation.counts||{};
 $('#adminAutomation').innerHTML=`<p><b>Rappels d’expiration</b> · 30, 15, 7 et 1 jour avant, puis après expiration.<br>
 ${automation.email_configured ? 'Messagerie configurée' : 'Messagerie à configurer'} · ${Number(counts.sent||0)} envois acceptés par la messagerie · ${Number(counts.pending||0)} en attente · ${Number(counts.failed||0)} en échec · ${Number(counts.uncertain||0)} livraison(s) à vérifier, sans renvoi automatique.<br>
 ${Number(automation.drivers_without_verified_email||0)} chauffeur(s) sans e-mail vérifié.<br>
-<b>Photos :</b> vérification humaine pour le moment. Le moteur documentaire n’est pas encore connecté.</p>`;
+<b>Pièces :</b> lecture OCR disponible avec « Lire cette pièce ». L’authenticité et la conformité restent à vérifier par un administrateur.</p>`;
+const closedCases=finance.closed_accounts_pending||[];
+$('#adminFinancialReview').innerHTML=`<h3>Comptes supprimés : paiements à vérifier</h3><p>Une suppression ne règle pas automatiquement un solde ou un paiement. Rapprochez ces références avec le prestataire avant toute décision.</p>${closedCases.length ? closedCases.map(item=>`<p><b>${esc(item.account_ref)}</b> · Solde conservé : ${money(item.balance)}</p>`).join('') : '<p>Aucun compte supprimé en attente de vérification financière.</p>'}${finance.closed_accounts_truncated ? '<p>Liste limitée aux 200 premiers cas : d’autres dossiers restent à examiner.</p>' : ''}`;
 const triageLabels={ready_for_review:'Prêt à vérifier',incomplete:'Dossier incomplet',expired:'Document expiré',verified:'Dossier vérifié'};
 const filter=$('#adminDriverFilter').value;
 $('#adminDrivers').innerHTML=

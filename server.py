@@ -1,3 +1,4 @@
+import closed_finance
 import booking_requests
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse, urlencode
@@ -47,7 +48,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.08-v63-reminder-outbox"
+APP_VERSION = "2026.10.08-v64-closed-finance"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -1754,6 +1755,8 @@ def db():
 
 def init():
     with db() as conn:
+        for schema in closed_finance.SCHEMAS:
+            conn.execute(schema)
         conn.execute(booking_requests.SCHEMA)
 
         conn.execute("""
@@ -3700,10 +3703,11 @@ class App(SimpleHTTPRequestHandler):
                 active = conn.execute("SELECT COUNT(*) AS n FROM rides WHERE driver_id=%s AND status IN ('accepted','arriving','in_progress','deposit_paid','fully_paid')", (driver["id"],)).fetchone()
                 if active["n"]:
                     return self.sendj({"error": "Une course active empêche la suppression."}, 409)
+                finance_review = closed_finance.preserve(conn, driver)
                 conn.execute("DELETE FROM driver_recharges WHERE driver_id=%s", (driver["id"],))
                 conn.execute("UPDATE rides SET driver_id=NULL,driver_name='Compte supprimé' WHERE driver_id=%s", (driver["id"],))
                 conn.execute("DELETE FROM drivers WHERE id=%s", (driver["id"],))
-            return self.sendj({"ok": True})
+            return self.sendj({"ok": True,"financial_review_required":finance_review,"message":"Compte supprimé. Les références financières nécessaires restent archivées."})
         if path == "/api/contact":
             if not self.check_rate("contact", 5, 3600):
                 return
@@ -3877,6 +3881,10 @@ class App(SimpleHTTPRequestHandler):
 
             with db() as conn:
                 if ref_command.startswith("RECH-"):
+                    # Same order as account deletion: driver first, recharge second.
+                    owner = conn.execute("SELECT driver_id FROM driver_recharges WHERE id=%s",(ref_command,)).fetchone()
+                    if owner and owner.get("driver_id"):
+                        conn.execute("SELECT id FROM drivers WHERE id=%s FOR UPDATE",(owner["driver_id"],)).fetchone()
                     recharge = conn.execute(
                         """
                         SELECT id, driver_id, amount, status
@@ -3888,6 +3896,19 @@ class App(SimpleHTTPRequestHandler):
                     ).fetchone()
 
                     if not recharge:
+                        archived = conn.execute("SELECT account_ref,amount,status FROM closed_driver_recharges WHERE id=%s",(ref_command,)).fetchone()
+                        if archived:
+                            try:
+                                amount = exact_xof_amount(effective_price)
+                            except (ValueError,TypeError):
+                                return self.sendj({"error":"Montant invalide"},400)
+                            if amount != int(archived["amount"]):
+                                return self.sendj({"error":"Montant incorrect"},409)
+                            if (event == "sale_complete" and archived["status"] == "paid") or (event == "sale_canceled" and archived["status"] == "canceled"):
+                                return self.sendj({"ok":True,"duplicate":True})
+                            conn.execute("UPDATE closed_driver_finance SET review_status='needs_review' WHERE account_ref=%s",(archived["account_ref"],))
+                            audit_event(conn,"paytech","","payment.late","closed_recharge",ref_command,{"amount":amount,"account_ref":archived["account_ref"]},outcome="manual_review")
+                            return self.sendj({"error":"Compte supprimé : paiement à rapprocher manuellement."},409)
                         return self.sendj({"error": "Recharge introuvable"}, 404)
 
                     try:
@@ -4651,6 +4672,7 @@ class App(SimpleHTTPRequestHandler):
                         "error": "Terminez votre course active avant de supprimer le compte."
                     }, 409)
 
+                finance_review = closed_finance.preserve(conn, driver)
                 conn.execute(
                     "DELETE FROM driver_recharges WHERE driver_id=%s",
                     (driver_id,)
@@ -4672,7 +4694,8 @@ class App(SimpleHTTPRequestHandler):
 
             return self.sendj({
                 "ok": True,
-                "message": "Votre compte et vos données chauffeur ont été supprimés."
+                "financial_review_required": finance_review,
+                "message": "Votre compte chauffeur a été supprimé. Les références financières nécessaires restent archivées ; un solde ou paiement en attente doit être vérifié par le support."
             })
 
 
@@ -4758,7 +4781,9 @@ class App(SimpleHTTPRequestHandler):
                     """,
                     (int(time.time()) - 7*86400,)
                 ).fetchall()
-            anomalies = []
+            with db() as conn:
+                closed_accounts = conn.execute("SELECT account_ref,balance,review_status,closed_at FROM closed_driver_finance WHERE review_status='needs_review' ORDER BY closed_at LIMIT 201").fetchall()
+            anomalies = [{"type":"closed_account_finance_review","id":row["account_ref"],"balance":row["balance"]} for row in closed_accounts[:200]]
             for r in rides:
                 if r.get("payment_status") in ("deposit_paid","fully_paid") and not r.get("deposit_paid_at"):
                     anomalies.append({"type":"ride_missing_paid_timestamp","id":r["id"]})
@@ -4769,6 +4794,8 @@ class App(SimpleHTTPRequestHandler):
                     anomalies.append({"type":"recharge_missing_paid_timestamp","id":x["id"]})
             return self.sendj({
                 "window_days": 7,
+                "closed_accounts_pending": closed_accounts[:200],
+                "closed_accounts_truncated": len(closed_accounts)>200,
                 "rides_count": len(rides),
                 "recharges_count": len(recharges),
                 "anomalies": anomalies

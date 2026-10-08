@@ -26,7 +26,9 @@ class AuditHTTP(unittest.TestCase):
         self.statements=[];self.rows=[]
         outer=self
         class DB:
-            def execute(self,q,args=()):outer.statements.append((q,args));return Rows(outer.rows if q.lstrip().startswith('SELECT') else [])
+            def execute(self,q,args=()):
+                outer.statements.append((q,args))
+                return Rows([] if 'FROM closed_driver_finance' in q else outer.rows if q.lstrip().startswith('SELECT') else [])
         @contextmanager
         def db():yield DB()
         for p in [patch.object(app,'db',db),patch.object(app.App,'check_rate',return_value=True),patch.object(app.App,'auth',return_value={'role':'admin','driver_id':'D'}),patch.object(app,'audit_event'),patch.object(app.App,'log_message')]:p.start();self.addCleanup(p.stop)
