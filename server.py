@@ -2,6 +2,7 @@ import journey_assistant
 import journey_chat
 import journey_support
 import journey_notifications
+import journey_events
 import journey_experience
 import closed_finance
 import booking_requests
@@ -53,7 +54,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.08-v66-assistant-ready"
+APP_VERSION = "2026.10.08-v67-journal-local-cleanup"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -2314,6 +2315,7 @@ def init():
             CREATE INDEX IF NOT EXISTS idx_support_requests_ride
             ON support_requests(ride_id, created_at DESC)
         """)
+        journey_events.install(conn)
 
 
 def hash_pin(pin, salt=None):
@@ -2882,6 +2884,8 @@ class App(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         if journey_assistant.handle_get(self,path,db):
+            return
+        if journey_events.handle_get(self,path,db):
             return
         if journey_chat.handle_get(self,path,db):
             return

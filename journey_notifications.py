@@ -2,7 +2,10 @@
 import hashlib,hmac,json,re,secrets,time,os
 from urllib.request import Request,urlopen
 from journey_experience import owned
+import journey_events
 SCHEMAS=(
+journey_events.SCHEMA,
+journey_events.INDEX,
 '''CREATE TABLE IF NOT EXISTS journey_push_subscriptions(id TEXT PRIMARY KEY,kind TEXT NOT NULL,owner_id TEXT NOT NULL,push_token TEXT NOT NULL,expires_at BIGINT NOT NULL,last_event TEXT NOT NULL DEFAULT '',revoked BOOLEAN NOT NULL DEFAULT FALSE,UNIQUE(kind,owner_id,push_token))''',
 '''CREATE TABLE IF NOT EXISTS journey_push_deliveries(id TEXT PRIMARY KEY,subscription_id TEXT NOT NULL,event TEXT NOT NULL,status TEXT NOT NULL,ticket_id TEXT,created_at BIGINT NOT NULL,receipt_at BIGINT,error TEXT)''',
 )
@@ -22,7 +25,7 @@ def handle_post(app,path,data,db):
    owner=str(data.get('ride_id') or '')
    ride=owned(conn,owner,data.get('tracking_token'))
    if not ride:app.sendj({'error':'Non autorisé'},401);return True
-   expires=int(time.time())+86400;event=ride['status']+':'+str(ride.get('payment_status') or '')
+   expires=int(time.time())+86400;record=journey_events.latest(conn,owner);event='journal:'+record['id'] if record else ride['status']+':'+str(ride.get('payment_status') or '')
   if data.get('enabled') is False:
    conn.execute('UPDATE journey_push_subscriptions SET revoked=TRUE WHERE kind=%s AND owner_id=%s AND push_token=%s',(kind,owner,token))
   elif data.get('enabled') is True:
@@ -41,9 +44,16 @@ def event_for(conn,sub,now):
   if not ride:return None
   state=ride['status'];payment=ride.get('payment_status')
   label=LABELS.get(state)
+  if payment=='failed':label='Votre paiement doit être vérifié'+(' · '+label if label else '')
   if payment in ('paid','fully_paid','deposit_paid'):
    label=('Acompte confirmé' if payment=='deposit_paid' else 'Paiement confirmé')+(' · '+label if label else '')
-  return (state+':'+str(payment or ''),label,60 if state in ('accepted','arriving','in_progress') else 300) if label else None
+  ttl=60 if state in ('accepted','arriving','in_progress') else 300
+  record=journey_events.latest(conn,sub['owner_id'])
+  if record:
+   # Never deliver an old state after cancellation/completion or a newer payment.
+   if record['status']!=state or (record.get('payment_status') or '')!=(payment or '') or record['created_us']<(now-ttl)*1000000:return None
+   return ('journal:'+record['id'],label,ttl) if label else None
+  return (state+':'+str(payment or ''),label,ttl) if label else None
  driver=conn.execute('SELECT status,online,last_location_at FROM drivers WHERE id=%s',(sub['owner_id'],)).fetchone()
  if not driver or driver['status']!='approved' or not driver['online'] or int(driver.get('last_location_at') or 0)<now-300:return None
  ride=conn.execute("SELECT id,offer_expires_at FROM rides WHERE offered_driver_id=%s AND status='searching' AND offer_expires_at>%s ORDER BY offer_expires_at DESC LIMIT 1",(sub['owner_id'],now)).fetchone()
@@ -92,6 +102,7 @@ def tick(db):
  with db() as conn:
   conn.execute('DELETE FROM journey_push_deliveries WHERE created_at<%s',(now-7*86400,))
   conn.execute('DELETE FROM journey_push_subscriptions WHERE expires_at<%s',(now-86400,))
+  journey_events.prune(conn,now)
 
 def worker(db):
  while True:
