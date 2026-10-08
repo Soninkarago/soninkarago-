@@ -1,3 +1,7 @@
+import journey_chat
+import journey_support
+import journey_notifications
+import journey_experience
 import closed_finance
 import booking_requests
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
@@ -48,7 +52,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.08-v64-closed-finance"
+APP_VERSION = "2026.10.08-v65-journey-trust"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -741,6 +745,12 @@ def search_senegal_places(query, bias_zone=None):
 
 
 def geocode_senegal(query, bias_zone=None):
+    coordinate=re.fullmatch(r'coordinate:([-+]?\d+(?:\.\d+)?),([-+]?\d+(?:\.\d+)?)',str(query or ''))
+    if coordinate:
+        lat,lng=map(float,coordinate.groups())
+        if not (12<=lat<=17.5 and -18.5<=lng<=-11):raise ValueError('Choisissez un point au Sénégal.')
+        point=reverse_geocode_senegal(lat,lng)
+        return {**point,'lat':lat,'lng':lng}
     candidates = search_senegal_places(query, bias_zone)
     if not candidates:
         raise ValueError("Lieu introuvable au Sénégal. Précisez la rue, le quartier et la localité.")
@@ -815,7 +825,7 @@ def traffic_route(result):
     return route
 
 
-def urban_route(origin, arrival, avoid_tolls=False):
+def urban_route(origin, arrival, avoid_tolls=False, stops=None):
     payload = {
         "origin": {"location": {"latLng": {"latitude": origin["lat"], "longitude": origin["lng"]}}},
         "destination": {"location": {"latLng": {"latitude": arrival["lat"], "longitude": arrival["lng"]}}},
@@ -826,6 +836,8 @@ def urban_route(origin, arrival, avoid_tolls=False):
         "routeModifiers": {"avoidTolls": avoid_tolls},
         "languageCode": "fr", "regionCode": "sn",
     }
+    if stops:
+        payload["intermediates"]=[{"location":{"latLng":{"latitude":p["lat"],"longitude":p["lng"]}}} for p in stops]
     req = Request("https://routes.googleapis.com/directions/v2:computeRoutes",
         json.dumps(payload).encode(), headers={"Content-Type": "application/json",
         "X-Goog-Api-Key": MAPS_API_KEY,
@@ -930,7 +942,7 @@ def urban_fare_breakdown(route, airport=False):
             "night_surcharge": 0}
 
 
-def urban_quote(zone_code, pickup, destination):
+def urban_quote(zone_code, pickup, destination, stops=None):
     if not MAPS_API_KEY or not AUTH_SECRET:
         raise RuntimeError("Calcul du trajet momentanément indisponible.")
 
@@ -961,11 +973,16 @@ def urban_quote(zone_code, pickup, destination):
             "La destination n'est pas encore dans une zone voiture SoninkaraGo."
         )
 
-    route = urban_route(origin, arrival)
+    if stops is not None and (not isinstance(stops,list) or len(stops)>3 or any(not isinstance(p,str) or not p.strip() or len(p)>256 for p in stops)):
+        raise ValueError('Vous pouvez ajouter jusqu’à trois arrêts valides.')
+    stop_points=[geocode_senegal(p,detected_zone) for p in (stops or [])]
+    if any(not detect_urban_zone(p['lat'],p['lng']) for p in stop_points):
+        raise ValueError('Chaque arrêt doit se trouver dans une zone voiture SoninkaraGo.')
+    route = urban_route(origin, arrival,stops=stop_points) if stop_points else urban_route(origin,arrival)
     route_note = ""
     if route_toll_fare(route) is None:
         # Never price an unknown toll as zero. Offer a verified toll-free route.
-        route = urban_route(origin, arrival, avoid_tolls=True)
+        route = urban_route(origin, arrival, avoid_tolls=True,stops=stop_points) if stop_points else urban_route(origin,arrival,avoid_tolls=True)
         if route_toll_fare(route) != 0:
             raise RuntimeError("Le montant des péages est indisponible. Impossible de confirmer un prix tout compris.")
         route_note = "Itinéraire sans péage : le trajet et sa durée évitent l'autoroute payante."
@@ -980,6 +997,7 @@ def urban_quote(zone_code, pickup, destination):
     quote = {
         "zone": detected_zone,
         "zone_label": zone["label"],
+        "stops": [{k:p[k] for k in ("address","lat","lng")} for p in stop_points],
         "destination_zone": destination_zone,
         "destination_zone_label": URBAN_CAR_ZONES[destination_zone]["label"],
         "pickup": origin["address"],
@@ -1755,6 +1773,13 @@ def db():
 
 def init():
     with db() as conn:
+        conn.execute(journey_chat.SCHEMA)
+        conn.execute(journey_support.SCHEMA)
+        conn.execute(journey_support.REQUEST_SCHEMA)
+        for schema in journey_notifications.SCHEMAS:
+            conn.execute(schema)
+        for schema in journey_experience.SCHEMAS:
+            conn.execute(schema)
         for schema in closed_finance.SCHEMAS:
             conn.execute(schema)
         conn.execute(booking_requests.SCHEMA)
@@ -2497,6 +2522,11 @@ def assign_next_driver(conn, ride_id, now=None):
         (ride["vehicle"], now - 300, int(ride["fee"] or 0))
     ).fetchall()
 
+    modern=conn.execute('SELECT ride_id FROM journey_codes WHERE ride_id=%s',(ride_id,)).fetchone()
+    if modern:
+        verified={p['driver_id'] for p in conn.execute("SELECT p.driver_id FROM driver_profiles p JOIN drivers d ON d.id=p.driver_id WHERE p.status='approved' AND p.plate=d.vehicle_plate").fetchall()}
+        drivers=[d for d in drivers if d['id'] in verified]
+
     urban_zone_code = None
     local_route = str(ride.get("route_code") or "") in LOCAL_SERVICE_CONFIG
     if ride["route_code"] == "dakar_car":
@@ -2681,6 +2711,17 @@ class App(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def sendh(self, content, status=200):
+        body=content.encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type','text/html; charset=utf-8')
+        self.send_header('Content-Length',str(len(body)))
+        self.send_header('Cache-Control','no-store')
+        self.send_header('X-Robots-Tag','noindex, nofollow, noarchive')
+        self.security_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
     def sendj(self, obj, status=200, extra_headers=None):
         body = json.dumps(
             obj,
@@ -2796,8 +2837,8 @@ class App(SimpleHTTPRequestHandler):
                 # already assigned passenger. Only closure of that assignment is allowed.
                 path = urlparse(getattr(self, "path", "")).path
                 method = getattr(self, "command", "")
-                match = re.fullmatch(r"/api/rides/([^/]+)/(complete|confirm-deposit|confirm-balance|location/driver)", path)
-                allowed = (method == "GET" and path in ("/api/driver/me", "/api/rides")) or (method == "POST" and (match or path == "/api/driver/offline"))
+                match = re.fullmatch(r"/api/rides/([^/]+)/(chat|start|arrive|complete|confirm-deposit|confirm-balance|location/driver)", path)
+                allowed = (method == "GET" and (path in ("/api/driver/me", "/api/rides") or (match and match.group(2)=="chat"))) or (method == "POST" and (match or path == "/api/driver/offline"))
                 if not allowed:
                     return None
                 with db() as conn:
@@ -2839,6 +2880,12 @@ class App(SimpleHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        if journey_chat.handle_get(self,path,db):
+            return
+        if journey_support.handle_get(self,path,db):
+            return
+        if journey_experience.handle_get(self,path,db):
+            return
 
         if path == "/api/booking/key":
             if not self.check_rate("booking-key", 60, 3600):
@@ -3028,6 +3075,9 @@ class App(SimpleHTTPRequestHandler):
             ):
                 return self.sendj({"error": "Non autorisé"}, 401)
 
+            with db() as conn:
+                trust = journey_experience.trust_fields(conn,row)
+
             # ETA réel : calculé à partir de la dernière position GPS du chauffeur
             # et de la circulation routière actuelle. On ne fabrique jamais une
             # estimation locale si Google Routes n'est pas disponible.
@@ -3037,7 +3087,7 @@ class App(SimpleHTTPRequestHandler):
             eta_source = "unavailable"
             now = int(time.time())
             driver_loc_at = int(row.get("driver_location_at") or 0)
-            driver_gps_fresh = driver_loc_at > 0 and (now - driver_loc_at) <= 60
+            driver_gps_fresh = driver_loc_at > 0 and 0 <= (now - driver_loc_at) <= 60
             eta_status = row.get("status") in ("accepted", "arriving")
             have_coords = all(row.get(k) is not None for k in (
                 "driver_lat", "driver_lng", "client_lat", "client_lng"
@@ -3083,7 +3133,10 @@ class App(SimpleHTTPRequestHandler):
                         except psycopg.Error as exc:
                             print(f"Cache ETA non enregistré pour {ride_id}: {exc}", flush=True)
 
+            driver_gps_fresh=bool(driver_gps_fresh and 0<=int(time.time())-driver_loc_at<=60)
+            if not driver_gps_fresh:eta_seconds=None;eta_distance_meters=None;eta_calculated_at=None;eta_source='unavailable'
             return self.sendj({
+                **trust,
                 "id": row.get("id", ride_id),
                 "pickup": row.get("pickup", ""),
                 "destination": row.get("destination", ""),
@@ -3206,6 +3259,12 @@ class App(SimpleHTTPRequestHandler):
                         )
                     ).fetchall()
 
+            if user['role']=='driver':
+                with db() as conn:
+                    for item in rows:
+                        route=conn.execute('SELECT stops FROM journey_routes WHERE ride_id=%s',(item['id'],)).fetchone()
+                        item['stops']=json.loads(route['stops']) if route else []
+                        item['pickup_code_required']=bool(conn.execute('SELECT ride_id FROM journey_codes WHERE ride_id=%s',(item['id'],)).fetchone())
             return self.sendj(rows)
         if path == "/api/driver/application":
             user = self.auth()
@@ -3523,16 +3582,25 @@ class App(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+
         if path == "/api/driver/application/documents":
             user = self.auth()
             if not user or user.get("role") != "driver_application":
                 return self.sendj({"error": "Connexion au dossier requise."}, 401)
             if not self.check_rate("driver-documents", 30, 3600, user.get("driver_id", "")):
                 return
-        data = self.body(6 * 1024 * 1024 if path == "/api/driver/application/documents" else 65536)
+        data = self.body(12 * 1024 * 1024 if path == "/api/driver/profile" else 6 * 1024 * 1024 if path == "/api/driver/application/documents" else 65536)
         if data is None:
             return
         if path != "/api/paytech/ipn" and not self.same_origin_request():
+            return
+        if journey_chat.handle_post(self,path,data,db):
+            return
+        if journey_support.handle_post(self,path,data,db,audit_event):
+            return
+        if journey_notifications.handle_post(self,path,data,db):
+            return
+        if journey_experience.handle_post(self,path,data,db):
             return
         if re.fullmatch(r"/api/admin/drivers/[^/]+/documents/[a-z]+/ocr", path):
             user = self.auth()
@@ -3663,6 +3731,8 @@ class App(SimpleHTTPRequestHandler):
                             conn.execute("DELETE FROM driver_documents WHERE driver_id=%s AND kind=%s", (driver["id"],kind))
                     assignments = ",".join(key + "=%s" for key in DRIVER_DETAIL_FIELDS)
                     conn.execute("UPDATE drivers SET " + assignments + ",compliance_verified=FALSE,compliance_verified_at=NULL WHERE id=%s", tuple(details[key] for key in DRIVER_DETAIL_FIELDS) + (driver["id"],))
+                    if changed.intersection({'vehicle_plate','registration_card_number'}):
+                        conn.execute("UPDATE driver_profiles SET status='pending',reviewed_at=NULL WHERE driver_id=%s",(driver['id'],))
                     driver.update(details)
                 result = driver_application(conn, driver)
             return self.sendj({"ok": True, **result})
@@ -3706,6 +3776,7 @@ class App(SimpleHTTPRequestHandler):
                 finance_review = closed_finance.preserve(conn, driver)
                 conn.execute("DELETE FROM driver_recharges WHERE driver_id=%s", (driver["id"],))
                 conn.execute("UPDATE rides SET driver_id=NULL,driver_name='Compte supprimé' WHERE driver_id=%s", (driver["id"],))
+                journey_experience.purge_driver(conn,driver["id"])
                 conn.execute("DELETE FROM drivers WHERE id=%s", (driver["id"],))
             return self.sendj({"ok": True,"financial_review_required":finance_review,"message":"Compte supprimé. Les références financières nécessaires restent archivées."})
         if path == "/api/contact":
@@ -3753,7 +3824,8 @@ class App(SimpleHTTPRequestHandler):
                 quote, token = urban_quote(
                     zone_code or None,
                     data.get("pickup"),
-                    data.get("destination")
+                    data.get("destination"),
+                    **({"stops":data["stops"]} if data.get("stops") else {})
                 )
                 zone_code = quote["zone"]
                 with db() as conn:
@@ -4120,8 +4192,18 @@ class App(SimpleHTTPRequestHandler):
                     return self.sendj({"error": "Non autorisé"}, 401)
                 phone = str(ride.get("phone") or "")[:40]
 
+            nonce=data.get('request_id')
+            if nonce is not None and (not ride_id or not isinstance(nonce,str) or not re.fullmatch(r'[A-Za-z0-9_-]{16,80}',nonce)):
+                return self.sendj({'error':'Référence d’envoi invalide.'},400)
+            key_hash=hashlib.sha256((ride_id+'|'+str(nonce)).encode()).hexdigest() if nonce else None
+            body_hash=hashlib.sha256(json.dumps([category,message],ensure_ascii=False).encode()).hexdigest()
             request_id = "SUP-" + secrets.token_hex(6).upper()
             with db() as conn:
+                if key_hash:
+                    conn.execute('INSERT INTO journey_support_requests(key_hash,request_id,body_hash) VALUES(%s,%s,%s) ON CONFLICT(key_hash) DO NOTHING',(key_hash,request_id,body_hash))
+                    stored=conn.execute('SELECT request_id,body_hash FROM journey_support_requests WHERE key_hash=%s',(key_hash,)).fetchone()
+                    if stored['body_hash']!=body_hash:return self.sendj({'error':'Cette référence appartient à une autre demande.'},409)
+                    if stored['request_id']!=request_id:return self.sendj({'ok':True,'request_id':stored['request_id'],'recovered':True})
                 conn.execute(
                     """
                     INSERT INTO support_requests(
@@ -4687,6 +4769,7 @@ class App(SimpleHTTPRequestHandler):
                 )
                 audit_event(conn, "driver", driver_id, "driver.account.delete", "driver", driver_id,
                             {"phone_hash": hashlib.sha256(str(driver.get("phone","")).encode()).hexdigest()[:16]})
+                journey_experience.purge_driver(conn,driver_id)
                 conn.execute(
                     "DELETE FROM drivers WHERE id=%s",
                     (driver_id,)
@@ -5306,6 +5389,10 @@ class App(SimpleHTTPRequestHandler):
                         "SN-2026-09-v2"
                     )
                 )
+                if data.get('pickup_code_enabled') is True and not is_minicar:
+                    journey_experience.ensure_code(conn,ride_id)
+                if not is_minicar and (data.get('journey_features') is True or (local_ride or urban_ride) and quote.get('stops')):
+                    conn.execute('INSERT INTO journey_routes(ride_id,route_polyline,quote_token,stops) VALUES(%s,%s,%s,%s) ON CONFLICT(ride_id) DO NOTHING',(ride_id,quote.get('route_polyline',''),str(data.get('quote_token') or ''),json.dumps(quote.get('stops') or [])))
                 if not mobile_payment:
                     assigned_driver = assign_next_driver(conn, ride_id)
 
@@ -5435,6 +5522,14 @@ class App(SimpleHTTPRequestHandler):
                         {"error": "Course déjà prise"},
                         409
                     )
+
+                modern=conn.execute('SELECT ride_id FROM journey_codes WHERE ride_id=%s',(ride_id,)).fetchone()
+                if modern:
+                    if data.get('pickup_code_supported') is not True:
+                        return self.sendj({'error':'Mettez à jour l’application chauffeur pour accepter les courses avec code de prise en charge.'},409)
+                    profile=conn.execute("SELECT p.driver_id FROM driver_profiles p JOIN drivers d ON d.id=p.driver_id WHERE p.driver_id=%s AND p.status='approved' AND p.plate=d.vehicle_plate",(driver_id,)).fetchone()
+                    if not profile:
+                        return self.sendj({'error':'Faites vérifier votre photo et votre véhicule avant d’accepter cette course.'},409)
 
                 commission = int(ride["fee"] or 0)
                 is_minicar = (
@@ -5772,6 +5867,7 @@ class App(SimpleHTTPRequestHandler):
                           (
                               vehicle<>'Minicar 14 places'
                               AND status IN ('accepted', 'arriving', 'in_progress')
+                              AND (NOT EXISTS(SELECT 1 FROM journey_codes c WHERE c.ride_id=rides.id) OR EXISTS(SELECT 1 FROM journey_codes c WHERE c.ride_id=rides.id AND c.verified_at IS NOT NULL))
                           )
                       )
                     """,
@@ -5781,7 +5877,7 @@ class App(SimpleHTTPRequestHandler):
                 return self.sendj(
                     {
                         "error":
-                        "Pour un minicar, confirmez les deux paiements avant de terminer."
+                        "Confirmez la prise en charge par code avant de terminer. Pour un minicar, les deux paiements doivent être reçus."
                     },
                     409
                 )
@@ -6090,6 +6186,7 @@ if __name__ == "__main__":
         document_ocr.smoke_test()
 
     init()
+    threading.Thread(target=journey_notifications.worker,args=(db,),daemon=True,name="journey-push").start()
     threading.Thread(target=expiry_reminder_worker, daemon=True, name="driver-expiry-reminders").start()
 
     BoundedHTTPServer(

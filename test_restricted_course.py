@@ -44,6 +44,7 @@ class MinicarClosure(unittest.TestCase):
     def test_only_valid_minicar_payment_and_completion_transitions_commit(self):
         c=sqlite3.connect(':memory:',check_same_thread=False);c.row_factory=sqlite3.Row
         c.execute('CREATE TABLE rides(id TEXT,driver_id TEXT,status TEXT,vehicle TEXT,payment_status TEXT,balance_paid_at INTEGER,balance_due INTEGER)')
+        c.execute('CREATE TABLE journey_codes(ride_id TEXT,verified_at INTEGER)')
         c.execute("INSERT INTO rides VALUES('R','D','cancelled','Minicar 14 places','deposit_paid',NULL,500)")
         class Cursor:
             def __init__(self,c):self.c=c;self.rowcount=c.rowcount

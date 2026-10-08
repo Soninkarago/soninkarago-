@@ -3201,6 +3201,21 @@ async function readDriverDocument(button,id,kind){
   }catch(e){output.textContent=e.message;}
   finally{button.disabled=false;}
 }
+
+async function loadDriverProfile(container,id){
+  try{
+    const result=await get('/admin/drivers/'+encodeURIComponent(id)+'/profile',adminToken);
+    const p=result.profile;const section=document.createElement('section');section.style.cssText='padding:16px;margin:12px 0;border:1px solid #dce6df;border-radius:14px';
+    const heading=document.createElement('h3');heading.textContent='Visage et véhicule';section.appendChild(heading);
+    if(!p){const empty=document.createElement('p');empty.textContent='Profil photographique non transmis.';section.appendChild(empty);container.appendChild(section);return;}
+    const detail=document.createElement('p');detail.textContent=p.make+' '+p.model+' · '+p.color+' · '+p.plate+' · '+p.status;section.appendChild(detail);
+    for(const key of ['portrait','vehicle_photo']){const image=document.createElement('img');image.src=p[key];image.alt=key==='portrait'?'Visage du chauffeur':'Véhicule et plaque';image.style.cssText='max-width:260px;max-height:220px;border-radius:12px;margin:8px';section.appendChild(image);}
+    const note=document.createElement('p');note.textContent='Vérifiez le visage avec la pièce d’identité, la plaque avec la carte grise et la cohérence du véhicule. Les photos ne sont affichées aux passagers qu’après validation.';section.appendChild(note);
+    if(p.status==='pending'){for(const [status,label] of [['approved','Valider les photos et le véhicule'],['rejected','Demander une correction']]){const button=document.createElement('button');button.className='secondary';button.textContent=label;button.onclick=async()=>{button.disabled=true;try{await post('/admin/drivers/'+encodeURIComponent(id)+'/profile-review',{status,updated_at:p.updated_at},adminToken);section.remove();await loadDriverProfile(container,id);}catch(e){button.disabled=false;alert(e.message);}};section.appendChild(button);}}
+    container.appendChild(section);
+  }catch(e){const error=document.createElement('p');error.textContent='Profil indisponible : '+e.message;container.appendChild(error);}
+}
+
 async function loadDriverDocuments(button,id){
   button.disabled=true;
   try{
@@ -3218,7 +3233,26 @@ async function loadDriverDocuments(button,id){
       container.appendChild(document.createElement('br'));
     });
     button.replaceWith(container);
+    await loadDriverProfile(container,id);
   }catch(e){button.disabled=false;alert(e.message);}
+}
+
+
+async function refreshJourneySupport(){
+  let panel=document.getElementById('journeySupportInbox');
+  if(!panel){panel=document.createElement('section');panel.id='journeySupportInbox';panel.className='card';document.getElementById('adminArea').appendChild(panel);}
+  panel.replaceChildren();const heading=document.createElement('h2');heading.textContent='Assistance · demandes passagers';panel.appendChild(heading);
+  try{
+    const tickets=await get('/admin/journey-support',adminToken);
+    if(!tickets.length){const empty=document.createElement('p');empty.textContent='Aucune demande.';panel.appendChild(empty);}
+    for(const ticket of tickets){const card=document.createElement('div');card.className='card';
+      const title=document.createElement('h3');title.textContent=ticket.id+' · '+ticket.category+' · '+ticket.status;card.appendChild(title);
+      const message=document.createElement('p');message.textContent=ticket.message+' · Référence '+(ticket.ride_id||'Non renseignée');card.appendChild(message);
+      const reply=document.createElement('textarea');reply.maxLength=2000;reply.value=ticket.reply||'';reply.placeholder='Réponse au passager';reply.setAttribute('aria-label','Réponse à '+ticket.id);card.appendChild(reply);
+      const status=document.createElement('select');status.setAttribute('aria-label','Statut de '+ticket.id);for(const [value,label] of [['open','Reçue'],['in_progress','En cours'],['resolved','Traitée']]){const option=document.createElement('option');option.value=value;option.textContent=label;status.appendChild(option);}status.value=ticket.status;card.appendChild(status);
+      const submit=document.createElement('button');submit.textContent='Enregistrer la réponse';submit.onclick=async()=>{submit.disabled=true;try{await post('/admin/journey-support/'+encodeURIComponent(ticket.id),{reply:reply.value,status:status.value},adminToken);await refreshJourneySupport();}catch(e){submit.disabled=false;alert(e.message);}};card.appendChild(submit);panel.appendChild(card);
+    }
+  }catch(e){const error=document.createElement('p');error.textContent='Assistance indisponible : '+e.message;panel.appendChild(error);}
 }
 
 async function refreshAdmin(){
@@ -3240,6 +3274,7 @@ get('/admin/automation',adminToken),
 post('/admin/payments/reconciliation',{},adminToken)
 ]);
 
+await refreshJourneySupport();
 $('#stats').innerHTML=
 `<p>
 <b>${s.n}</b> courses •

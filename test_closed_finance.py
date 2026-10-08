@@ -5,6 +5,7 @@ from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 import server
 import closed_finance
+import journey_experience,journey_notifications
 
 class ClosedFinance(unittest.TestCase):
     def setUp(self):
@@ -15,6 +16,7 @@ class ClosedFinance(unittest.TestCase):
         CREATE TABLE rides(id TEXT,driver_id TEXT,driver_name TEXT,status TEXT,fare INT,fee INT,payment TEXT,tracking_token TEXT,client_lat REAL);
         CREATE TABLE driver_recharges(id TEXT PRIMARY KEY,driver_id TEXT REFERENCES drivers(id),amount INT,payment TEXT,status TEXT,created_at INT,paid_at INT);
         """)
+        for schema in journey_experience.SCHEMAS+journey_notifications.SCHEMAS:self.c.execute(schema)
         for schema in closed_finance.SCHEMAS:self.c.execute(schema)
         digest,salt=server.hash_pin('1234')
         self.c.execute('INSERT INTO drivers VALUES(?,?,?,?,?,?,?)',('D',700,digest,salt,'770000001','Private name','approved'))
