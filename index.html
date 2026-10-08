@@ -2893,6 +2893,9 @@ try{
 
   $('#driverBalance').textContent =
   money(me.balance);
+  $('#driverOnlineBtn').disabled=Boolean(me.restricted);
+  $('#driverRechargeBtn').disabled=Boolean(me.restricted);
+  if(me.restricted){driverOnline=false;stopDriverOnlineGps();$('#driverOnlineStatus').textContent='Compte restreint : aucune nouvelle course. Vous pouvez clôturer votre course déjà attribuée.';}
   $('#driverExpiryAlerts').textContent=(me.expiry_alerts||[]).map(expiryAlertText).join(' · ');
 
 }catch(e){
@@ -2922,7 +2925,7 @@ if(offeredRide && offeredRide.id !== lastOfferedRide){
 }
 const acceptedRide =
 rs.find(
-    r=>r.status==='accepted'
+    r=>['accepted','arriving','in_progress','deposit_paid','fully_paid'].includes(r.status)
 );
 
 activeDriverRide =
@@ -2990,9 +2993,12 @@ Accepter (<span>${Math.max(0,Math.ceil(Number(r.offer_expires_at)-Date.now()/100
 <button class="secondary" onclick="declineRide('${esc(r.id)}')">Refuser</button>`
   : `<button onclick="acceptRide('${esc(r.id)}')">Accepter la réservation</button>`)
 :
-`<button onclick="completeRide('${esc(r.id)}')">
-Terminer
-</button>`
+(r.vehicle==='Minicar 14 places' && r.status==='accepted' && !r.commission_charged
+ ? `<button onclick="confirmMinicarPayment('${esc(r.id)}','deposit',${Number(r.deposit_amount)||0})">Confirmer l’acompte reçu</button>`
+ : r.vehicle==='Minicar 14 places' && r.status==='deposit_paid' && r.payment_status==='deposit_paid' && r.commission_charged
+ ? `<button onclick="confirmMinicarPayment('${esc(r.id)}','balance',${Number(r.balance_due)||0})">Confirmer le solde reçu</button>`
+ : (r.vehicle==='Minicar 14 places' ? r.status==='fully_paid' && r.payment_status==='fully_paid' : ['accepted','arriving','in_progress'].includes(r.status))
+ ? `<button onclick="completeRide('${esc(r.id)}')">Terminer</button>` : '')
 }
 
 </div>
@@ -3078,6 +3084,16 @@ alert(e.message);
 }
 }
 
+
+let minicarPaymentBusy=false;
+async function confirmMinicarPayment(id,kind,amount){
+  if(minicarPaymentBusy || !['deposit','balance'].includes(kind))return;
+  if(!confirm('Confirmez uniquement après réception de '+money(amount)+(kind==='deposit' ? '. La commission sera prélevée sur votre solde.' : '.')))return;
+  minicarPaymentBusy=true;
+  try{await post('/rides/'+encodeURIComponent(id)+'/confirm-'+kind,{},driverToken);await refreshDriver();}
+  catch(error){alert(error.message);}
+  finally{minicarPaymentBusy=false;}
+}
 
 async function completeRide(id){
 
@@ -3232,7 +3248,7 @@ ${money(s.fees)} commissions
 
 const counts=automation.counts||{};
 $('#adminAutomation').innerHTML=`<p><b>Rappels d’expiration</b> · 30, 15, 7 et 1 jour avant, puis après expiration.<br>
-${automation.email_configured ? 'Messagerie configurée' : 'Messagerie à configurer'} · ${Number(counts.sent||0)} envois acceptés par la messagerie · ${Number(counts.pending||0)} en attente · ${Number(counts.failed||0)} en échec.<br>
+${automation.email_configured ? 'Messagerie configurée' : 'Messagerie à configurer'} · ${Number(counts.sent||0)} envois acceptés par la messagerie · ${Number(counts.pending||0)} en attente · ${Number(counts.failed||0)} en échec · ${Number(counts.uncertain||0)} livraison(s) à vérifier, sans renvoi automatique.<br>
 ${Number(automation.drivers_without_verified_email||0)} chauffeur(s) sans e-mail vérifié.<br>
 <b>Photos :</b> vérification humaine pour le moment. Le moteur documentaire n’est pas encore connecté.</p>`;
 const triageLabels={ready_for_review:'Prêt à vérifier',incomplete:'Dossier incomplet',expired:'Document expiré',verified:'Dossier vérifié'};

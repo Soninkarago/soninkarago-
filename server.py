@@ -47,7 +47,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.08-v62-course-financial-sessions"
+APP_VERSION = "2026.10.08-v63-reminder-outbox"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -157,6 +157,14 @@ def due_expiry_reminders(driver, today=None):
     return result
 
 
+class ReminderNotSent(RuntimeError):
+    """SMTP did not accept this message; a retry is safe."""
+
+
+class ReminderDeliveryUncertain(RuntimeError):
+    """DATA may have been accepted; never retry automatically."""
+
+
 def send_expiry_email(recipient, label, expiry, days, notification_id):
     if not recovery_email_configured() or not valid_recovery_email(recipient):
         raise RuntimeError("Reminder email unavailable")
@@ -178,12 +186,24 @@ def send_expiry_email(recipient, label, expiry, days, notification_id):
     if mode == "ssl":
         kwargs["context"] = context
     client_class = smtplib.SMTP_SSL if mode == "ssl" else smtplib.SMTP
-    with client_class(os.environ["CONTACT_SMTP_HOST"], int(os.environ.get("CONTACT_SMTP_PORT", "465" if mode == "ssl" else "587")), **kwargs) as client:
-        if mode == "starttls":
-            client.ehlo(); client.starttls(context=context); client.ehlo()
-        client.login(user, os.environ["CONTACT_SMTP_PASSWORD"])
-        if client.send_message(message):
-            raise RuntimeError("Reminder recipient rejected")
+    data_started = False
+    accepted = False
+    try:
+        with client_class(os.environ["CONTACT_SMTP_HOST"], int(os.environ.get("CONTACT_SMTP_PORT", "465" if mode == "ssl" else "587")), **kwargs) as client:
+            if mode == "starttls":
+                client.ehlo(); client.starttls(context=context); client.ehlo()
+            client.login(user, os.environ["CONTACT_SMTP_PASSWORD"])
+            data_started = True
+            if client.send_message(message):
+                raise ReminderNotSent("Recipient rejected")
+            accepted = True
+    except Exception as exc:
+        if accepted:
+            # A failed QUIT does not undo the server's acceptance of DATA.
+            return
+        if not data_started or isinstance(exc, (ReminderNotSent,smtplib.SMTPSenderRefused,smtplib.SMTPRecipientsRefused,smtplib.SMTPDataError)):
+            raise ReminderNotSent("SMTP did not accept message") from exc
+        raise ReminderDeliveryUncertain("SMTP acknowledgement unavailable") from exc
 
 
 def queue_expiry_reminders(conn, today=None, now=None):
@@ -208,10 +228,10 @@ def process_expiry_reminders(limit=10, today=None, now=None):
     today = today or date.today()
     now = int(time.time()) if now is None else now
     processed = 0
+    with db() as conn:
+        conn.execute("UPDATE driver_expiry_notifications SET status='uncertain',last_error='delivery_unconfirmed' WHERE status='sending' AND next_attempt_at<=%s", (now,))
     for _ in range(limit):
         with db() as conn:
-            # Lock only the outbox row, not the chauffeur or his active trip.
-            # Multiple workers skip already locked notifications.
             notification = conn.execute("""SELECT * FROM driver_expiry_notifications
                 WHERE status='pending' AND next_attempt_at<=%s
                 ORDER BY next_attempt_at,created_at LIMIT 1 FOR UPDATE SKIP LOCKED""", (now,)).fetchone()
@@ -226,16 +246,22 @@ def process_expiry_reminders(limit=10, today=None, now=None):
                 conn.execute("UPDATE driver_expiry_notifications SET status='cancelled' WHERE id=%s", (notification["id"],))
                 continue
             attempts = int(notification["attempts"]) + 1
-            try:
-                send_expiry_email(recipient, current["label"], current["expiry"], current["days"], notification["id"])
-            except Exception:
-                conn.execute("""UPDATE driver_expiry_notifications SET status=%s,attempts=%s,
-                    next_attempt_at=%s,last_error='smtp_unavailable' WHERE id=%s""",
-                    ('failed' if attempts >= 5 else 'pending', attempts, now + min(3600, 600 * 2 ** (attempts-1)), notification["id"]))
-            else:
-                conn.execute("""UPDATE driver_expiry_notifications SET status='sent',attempts=%s,
-                    sent_at=%s,last_error=NULL WHERE id=%s""", (attempts, now, notification["id"]))
-            processed += 1
+            conn.execute("UPDATE driver_expiry_notifications SET status='sending',attempts=%s,next_attempt_at=%s WHERE id=%s", (attempts,now+300,notification["id"]))
+        # Commit the claim BEFORE SMTP. A crash after DATA cannot put it back in pending.
+        try:
+            send_expiry_email(recipient, current["label"], current["expiry"], current["days"], notification["id"])
+        except ReminderNotSent:
+            with db() as conn:
+                conn.execute("""UPDATE driver_expiry_notifications SET status=%s,
+                    next_attempt_at=%s,last_error='smtp_unavailable' WHERE id=%s AND status='sending'""",
+                    ('failed' if attempts >= 5 else 'pending', now + min(3600,600*2**(attempts-1)), notification["id"]))
+        except Exception:
+            with db() as conn:
+                conn.execute("UPDATE driver_expiry_notifications SET status='uncertain',last_error='delivery_unconfirmed' WHERE id=%s AND status='sending'", (notification["id"],))
+        else:
+            with db() as conn:
+                conn.execute("UPDATE driver_expiry_notifications SET status='sent',sent_at=%s,last_error=NULL WHERE id=%s AND status='sending'", (now,notification["id"]))
+        processed += 1
     return processed
 
 

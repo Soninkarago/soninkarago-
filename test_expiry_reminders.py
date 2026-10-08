@@ -66,7 +66,7 @@ class ExpiryReminders(unittest.TestCase):
         self.assertEqual(self.row()['status'],'cancelled')
     def test_retry_backoff_and_stop_after_five_failures(self):
         self.queue()
-        with patch.object(server,'send_expiry_email',side_effect=RuntimeError('private SMTP detail')):
+        with patch.object(server,'send_expiry_email',side_effect=server.ReminderNotSent('private SMTP detail')):
             for attempt in range(1,6):
                 now=self.row()['next_attempt_at']
                 server.process_expiry_reminders(today=self.today,now=now)
@@ -80,6 +80,24 @@ class ExpiryReminders(unittest.TestCase):
     def test_downtime_sends_only_closest_milestone(self):
         driver={'status':'approved','insurance_expiry':(self.today+timedelta(days=4)).isoformat()}
         self.assertEqual([r['milestone'] for r in server.due_expiry_reminders(driver,self.today)],[7])
+    def test_uncertain_delivery_is_not_automatically_retried(self):
+        self.queue()
+        def uncertain(*args):
+            self.assertEqual(self.row()['status'],'sending')
+            raise server.ReminderDeliveryUncertain('private detail')
+        with patch.object(server,'send_expiry_email',side_effect=uncertain) as send:
+            server.process_expiry_reminders(today=self.today,now=100)
+            server.process_expiry_reminders(today=self.today,now=1000)
+            send.assert_called_once()
+        self.assertEqual(self.row()['status'],'uncertain')
+    def test_worker_crash_after_claim_leaves_no_retryable_message(self):
+        self.queue()
+        with patch.object(server,'send_expiry_email',side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):server.process_expiry_reminders(today=self.today,now=100)
+        self.assertEqual(self.row()['status'],'sending')
+        with patch.object(server,'send_expiry_email') as send:
+            server.process_expiry_reminders(today=self.today,now=401);send.assert_not_called()
+        self.assertEqual(self.row()['status'],'uncertain')
     def test_no_smtp_configuration_does_not_mark_sent(self):
         self.queue()
         with patch.object(server,'recovery_email_configured',return_value=False):
