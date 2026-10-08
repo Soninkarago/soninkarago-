@@ -17,6 +17,7 @@ import math
 import uuid
 import unicodedata
 import socket
+from decimal import Decimal, InvalidOperation
 from datetime import date
 import smtplib
 import ssl
@@ -26,6 +27,7 @@ from collections import defaultdict, deque
 import psycopg
 from psycopg.rows import dict_row
 import phonenumbers
+import document_ocr
 
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -44,7 +46,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.08-v56-driver-safety"
+APP_VERSION = "2026.10.08-v59-audit-ocr-expiry-admin"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -125,6 +127,133 @@ def deliver_contact(fields):
             raise RuntimeError("Contact recipient rejected")
 
 
+
+EXPIRY_FIELDS = {
+    "licence": ("driving_licence_expiry", "permis de conduire"),
+    "insurance": ("insurance_expiry", "assurance"),
+    "inspection": ("technical_inspection_expiry", "visite technique"),
+}
+EXPIRY_MILESTONES = (30, 15, 7, 1, 0)
+
+
+def due_expiry_reminders(driver, today=None):
+    today = today or date.today()  # Dakar uses UTC throughout the year.
+    if driver.get("status") != "approved":
+        return []
+    result = []
+    for kind, (field, label) in EXPIRY_FIELDS.items():
+        try:
+            expiry = date.fromisoformat(str(driver.get(field) or ""))
+        except ValueError:
+            continue
+        days = (expiry - today).days
+        # Only the closest reached milestone: no burst of obsolete reminders
+        # after downtime or when an existing account first enters the system.
+        milestones = [0] if days < 0 else [n for n in EXPIRY_MILESTONES if n > 0 and days <= n]
+        if milestones:
+            result.append({"kind": kind, "expiry": expiry.isoformat(),
+                           "milestone": min(milestones), "days": days, "label": label})
+    return result
+
+
+def send_expiry_email(recipient, label, expiry, days, notification_id):
+    if not recovery_email_configured() or not valid_recovery_email(recipient):
+        raise RuntimeError("Reminder email unavailable")
+    mode = os.environ.get("CONTACT_SMTP_SECURITY", "ssl").lower()
+    user = os.environ["CONTACT_SMTP_USER"]
+    message = EmailMessage()
+    message["From"] = os.environ.get("CONTACT_SMTP_FROM", user).strip()
+    message["To"] = recipient
+    message["Subject"] = "SoninkaraGo — " + ("Document expiré" if days < 0 else "Renouvellement de votre document")
+    message["Message-ID"] = "<expiry-" + notification_id + "@soninkarago.sn>"
+    formatted_date = date.fromisoformat(expiry).strftime("%d/%m/%Y")
+    if days < 0:
+        body = "Votre " + label + " a expiré le " + formatted_date + ". Vous ne pouvez plus recevoir de nouvelles courses tant que votre dossier n’est pas à jour."
+    else:
+        body = "Votre " + label + " arrive à expiration le " + formatted_date + ". Préparez son renouvellement pour continuer à recevoir des courses."
+    message.set_content(body + "\n\nSi votre document a déjà été renouvelé, faites mettre à jour votre dossier SoninkaraGo.\n\nL’équipe SoninkaraGo")
+    context = ssl.create_default_context()
+    kwargs = {"timeout": 15}
+    if mode == "ssl":
+        kwargs["context"] = context
+    client_class = smtplib.SMTP_SSL if mode == "ssl" else smtplib.SMTP
+    with client_class(os.environ["CONTACT_SMTP_HOST"], int(os.environ.get("CONTACT_SMTP_PORT", "465" if mode == "ssl" else "587")), **kwargs) as client:
+        if mode == "starttls":
+            client.ehlo(); client.starttls(context=context); client.ehlo()
+        client.login(user, os.environ["CONTACT_SMTP_PASSWORD"])
+        if client.send_message(message):
+            raise RuntimeError("Reminder recipient rejected")
+
+
+def queue_expiry_reminders(conn, today=None, now=None):
+    now = int(time.time()) if now is None else now
+    drivers = conn.execute("""SELECT id,status,recovery_email,recovery_email_verified,
+        driving_licence_expiry,insurance_expiry,technical_inspection_expiry
+        FROM drivers WHERE status='approved'""").fetchall()
+    for driver in drivers:
+        if not driver.get("recovery_email_verified") or not valid_recovery_email(driver.get("recovery_email")):
+            continue
+        for item in due_expiry_reminders(driver, today):
+            conn.execute("""INSERT INTO driver_expiry_notifications
+                (id,driver_id,kind,expiry,milestone,status,attempts,next_attempt_at,created_at)
+                VALUES(%s,%s,%s,%s,%s,'pending',0,%s,%s)
+                ON CONFLICT(driver_id,kind,expiry,milestone) DO NOTHING""",
+                (uuid.uuid4().hex, driver["id"], item["kind"], item["expiry"], item["milestone"], now, now))
+
+
+def process_expiry_reminders(limit=10, today=None, now=None):
+    if not recovery_email_configured():
+        return 0
+    today = today or date.today()
+    now = int(time.time()) if now is None else now
+    processed = 0
+    for _ in range(limit):
+        with db() as conn:
+            # Lock only the outbox row, not the chauffeur or his active trip.
+            # Multiple workers skip already locked notifications.
+            notification = conn.execute("""SELECT * FROM driver_expiry_notifications
+                WHERE status='pending' AND next_attempt_at<=%s
+                ORDER BY next_attempt_at,created_at LIMIT 1 FOR UPDATE SKIP LOCKED""", (now,)).fetchone()
+            if not notification:
+                break
+            driver = conn.execute("SELECT * FROM drivers WHERE id=%s", (notification["driver_id"],)).fetchone()
+            current = next((r for r in due_expiry_reminders(driver or {}, today)
+                            if r["kind"] == notification["kind"] and r["expiry"] == notification["expiry"]
+                            and r["milestone"] == notification["milestone"]), None)
+            recipient = valid_recovery_email((driver or {}).get("recovery_email"))
+            if not current or not recipient or not driver.get("recovery_email_verified"):
+                conn.execute("UPDATE driver_expiry_notifications SET status='cancelled' WHERE id=%s", (notification["id"],))
+                continue
+            attempts = int(notification["attempts"]) + 1
+            try:
+                send_expiry_email(recipient, current["label"], current["expiry"], current["days"], notification["id"])
+            except Exception:
+                conn.execute("""UPDATE driver_expiry_notifications SET status=%s,attempts=%s,
+                    next_attempt_at=%s,last_error='smtp_unavailable' WHERE id=%s""",
+                    ('failed' if attempts >= 5 else 'pending', attempts, now + min(3600, 600 * 2 ** (attempts-1)), notification["id"]))
+            else:
+                conn.execute("""UPDATE driver_expiry_notifications SET status='sent',attempts=%s,
+                    sent_at=%s,last_error=NULL WHERE id=%s""", (attempts, now, notification["id"]))
+            processed += 1
+    return processed
+
+
+def expiry_reminder_worker():
+    last_scan = 0
+    stop = threading.Event()
+    while True:
+        try:
+            now = int(time.time())
+            if now - last_scan >= 3600:
+                with db() as conn:
+                    queue_expiry_reminders(conn, now=now)
+                last_scan = now
+            process_expiry_reminders()
+        except Exception:
+            print("Driver expiry reminder worker unavailable", flush=True)
+        stop.wait(60)
+
+
 def recovery_email_configured():
     return all(os.environ.get(key, "").strip() for key in ("CONTACT_SMTP_HOST", "CONTACT_SMTP_USER", "CONTACT_SMTP_PASSWORD")) and os.environ.get("CONTACT_SMTP_SECURITY", "ssl").lower() in ("ssl", "starttls")
 
@@ -132,6 +261,20 @@ def recovery_email_configured():
 def valid_recovery_email(value):
     value = str(value or "").strip().lower()
     return value if len(value) <= 254 and re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+", value) else None
+
+
+def exact_xof_amount(value):
+    """Do not round or truncate a signed payment callback's amount."""
+    raw = str(value).strip()
+    if len(raw) > 32:
+        raise ValueError("Montant invalide")
+    try:
+        amount = Decimal(raw)
+    except InvalidOperation:
+        raise ValueError("Montant invalide")
+    if not amount.is_finite() or amount <= 0 or amount > 2_147_483_647 or amount != amount.to_integral_value():
+        raise ValueError("Montant invalide")
+    return int(amount)
 
 
 def recovery_code_hash(challenge_hash, code):
@@ -1436,6 +1579,47 @@ def driver_can_receive_rides(driver):
     return True
 
 
+def begin_document_renewal(conn, driver):
+    """Renewal suspends new rides and requires a fresh administrator review."""
+    if driver.get("status") == "pending":
+        return
+    if driver.get("status") != "approved":
+        raise ValueError("Seul un dossier validé ou en attente peut être modifié.")
+    active = conn.execute("SELECT id FROM rides WHERE driver_id=%s AND status IN ('accepted','arriving','in_progress','deposit_paid','fully_paid') LIMIT 1", (driver["id"],)).fetchone()
+    if active:
+        raise ValueError("Terminez votre course active avant de renouveler vos documents.")
+    conn.execute("UPDATE drivers SET status='pending',online=FALSE,compliance_verified=FALSE,compliance_verified_at=NULL WHERE id=%s", (driver["id"],))
+    driver.update(status="pending", online=False, compliance_verified=False, compliance_verified_at=None)
+    audit_event(conn, "driver_application", driver["id"], "driver.documents.renew", "driver", driver["id"])
+
+
+
+def application_triage(driver, uploaded, today=None):
+    today = today or date.today()
+    missing = [kind for kind in required_driver_documents(driver.get("vehicle")) if kind not in uploaded]
+    issues = ["Pièce manquante : " + DRIVER_DOCUMENT_TYPES[kind] for kind in missing]
+    expired = False
+    for kind, (field, label) in EXPIRY_FIELDS.items():
+        value = driver.get(field)
+        if not value and kind == "inspection" and driver.get("vehicle") != "Voiture taxi":
+            continue
+        try:
+            expiry = date.fromisoformat(str(value or ""))
+        except ValueError:
+            issues.append("Date à compléter : " + label)
+            continue
+        if expiry < today:
+            issues.append("Document expiré : " + label)
+            expired = True
+    try:
+        validate_application_details(driver, driver.get("vehicle"))
+    except ValueError as exc:
+        if not issues:
+            issues.append(str(exc))
+    state = "expired" if expired else "incomplete" if issues else "verified" if driver.get("compliance_verified") else "ready_for_review"
+    return {"state": state, "issues": issues, "document_authenticity_verified_automatically": False}
+
+
 def validate_driver_document(data):
     kind = data.get("kind")
     encoded = data.get("content_base64")
@@ -1470,7 +1654,28 @@ def driver_application(conn, driver):
     return {"phone": driver["phone"], "recovery_email": driver.get("recovery_email", "") if driver.get("recovery_email_verified") else "", "id": driver["id"], "name": driver["name"], "vehicle": driver["vehicle"],
             "status": driver["status"], "documents": documents,
             "details": {key: driver.get(key, "") or "" for key in DRIVER_DETAIL_FIELDS},
+            "expiry_alerts": driver_expiry_alerts(driver),
+            "last_review": conn.execute("SELECT decision,notes,created_at FROM driver_compliance_checks WHERE driver_id=%s ORDER BY created_at DESC LIMIT 1", (driver["id"],)).fetchone(),
             "required_documents": required, "missing_documents": [k for k in required if k not in uploaded]}
+
+
+def driver_expiry_alerts(driver, today=None):
+    today = today or date.today()
+    alerts = []
+    for kind, field in (("licence", "driving_licence_expiry"), ("insurance", "insurance_expiry"), ("inspection", "technical_inspection_expiry")):
+        value = driver.get(field)
+        if not value and kind == "inspection" and driver.get("vehicle") != "Voiture taxi":
+            continue
+        try:
+            days = (date.fromisoformat(value) - today).days
+            if days > 30:
+                continue
+            state = "expired" if days < 0 else "due_today" if days == 0 else "expiring"
+        except (ValueError, TypeError):
+            days, state = None, "invalid"
+        alerts.append({"kind": kind, "label": DRIVER_DOCUMENT_TYPES[kind], "expiry": value or "",
+                       "days_remaining": days, "state": state})
+    return alerts
 
 
 def db():
@@ -1652,6 +1857,23 @@ def init():
                 created_at BIGINT NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS driver_expiry_notifications(
+                id TEXT PRIMARY KEY,
+                driver_id TEXT NOT NULL REFERENCES drivers(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL,
+                expiry TEXT NOT NULL,
+                milestone INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at BIGINT NOT NULL,
+                created_at BIGINT NOT NULL,
+                sent_at BIGINT,
+                last_error TEXT,
+                UNIQUE(driver_id,kind,expiry,milestone)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS expiry_notifications_due ON driver_expiry_notifications(status,next_attempt_at)")
         conn.execute("ALTER TABLE drivers ADD COLUMN IF NOT EXISTS pin_reset_at DOUBLE PRECISION NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE drivers ADD COLUMN IF NOT EXISTS recovery_email TEXT NOT NULL DEFAULT ''")
         conn.execute("ALTER TABLE drivers ADD COLUMN IF NOT EXISTS recovery_email_verified BOOLEAN NOT NULL DEFAULT FALSE")
@@ -2276,6 +2498,14 @@ class App(SimpleHTTPRequestHandler):
     server_version = "SoninkaraGo"
     sys_version = ""
 
+    def log_request(self, code="-", size="-"):
+        # Tracking URLs contain bearer secrets. Never log their query strings.
+        self.log_message("%s %s %s %s", self.command, urlparse(self.path).path, code, size)
+
+    def log_error(self, format, *args):
+        # Base HTTP error logs can also include an untrusted raw request line.
+        self.log_message("HTTP request error")
+
     def version_string(self):
         return self.server_version
 
@@ -2541,6 +2771,8 @@ class App(SimpleHTTPRequestHandler):
                 self.sendj({"error": "Recherche d’adresse momentanément indisponible."}, 503)
             return
         if path == "/api/location/reverse":
+            if not self.check_rate("location-reverse", 30, 60):
+                return
             try:
                 params = parse_qs(parsed.query)
                 lat = (params.get("lat") or [""])[0]
@@ -2602,6 +2834,7 @@ class App(SimpleHTTPRequestHandler):
                 "paytech_configured": bool(PAYTECH_API_KEY and PAYTECH_API_SECRET),
                 "maps_configured": bool(MAPS_API_KEY),
                 "auth_secret_configured": bool(AUTH_SECRET),
+                "ocr_configured": bool(document_ocr.configuration()[0]),
             }
             try:
                 started = time.time()
@@ -2897,7 +3130,7 @@ class App(SimpleHTTPRequestHandler):
             with db() as conn:
                 driver = conn.execute(
                     """
-                    SELECT balance, name, phone, recovery_email, recovery_email_verified, vehicle, village, online, status
+                    SELECT balance, name, phone, recovery_email, recovery_email_verified, vehicle, village, online, status, driving_licence_number, driving_licence_expiry, insurance_policy_number, insurance_expiry, technical_inspection_expiry, compliance_verified, vehicle_plate, registration_card_number, transport_authorisation_reference
                     FROM drivers
                     WHERE id=%s
                     """,
@@ -2919,7 +3152,9 @@ class App(SimpleHTTPRequestHandler):
                 "name": driver["name"],
                 "vehicle": driver["vehicle"],
                 "village": driver["village"],
-                "online": bool(driver["online"])
+                "online": bool(driver["online"]),
+                "expiry_alerts": driver_expiry_alerts(driver),
+                "eligible_for_rides": driver_can_receive_rides(driver)
             })
 
         # Statistiques Admin
@@ -2971,6 +3206,18 @@ class App(SimpleHTTPRequestHandler):
             return self.sendj(rows)
 
 
+        if path == "/api/admin/automation":
+            user = self.auth()
+            if not user or user.get("role") != "admin":
+                return self.sendj({"error": "Non autorisé"}, 401)
+            with db() as conn:
+                counts = conn.execute("SELECT status,COUNT(*) AS n FROM driver_expiry_notifications GROUP BY status").fetchall()
+                missing = conn.execute("SELECT COUNT(*) AS n FROM drivers WHERE status='approved' AND recovery_email_verified=FALSE").fetchone()
+                recent = conn.execute("""SELECT id,driver_id,kind,expiry,milestone,status,attempts,sent_at,last_error
+                    FROM driver_expiry_notifications ORDER BY created_at DESC LIMIT 50""").fetchall()
+            return self.sendj({"email_configured": recovery_email_configured(), "reminder_days": list(EXPIRY_MILESTONES),
+                "counts": {r["status"]: r["n"] for r in counts}, "drivers_without_verified_email": missing["n"], "recent": recent})
+
         if path == "/api/admin/drivers":
             user = self.auth()
 
@@ -2987,7 +3234,7 @@ class App(SimpleHTTPRequestHandler):
                 rows = conn.execute(
                     """
                     SELECT
-                        id,
+                        drivers.id,
                         name,
                         phone,
                         village,
@@ -3003,12 +3250,19 @@ class App(SimpleHTTPRequestHandler):
                         technical_inspection_expiry,
                         transport_authorisation_reference,
                         compliance_verified,
-                        compliance_verified_at
+                        compliance_verified_at,
+                        ARRAY(SELECT kind FROM driver_documents WHERE driver_id=drivers.id ORDER BY kind) AS uploaded_documents,
+                        (SELECT MAX(uploaded_at) FROM driver_documents WHERE driver_id=drivers.id) AS last_upload_at,
+                        (SELECT notes FROM driver_compliance_checks WHERE driver_id=drivers.id ORDER BY created_at DESC LIMIT 1) AS last_review_notes
                     FROM drivers
                     ORDER BY created_at DESC
                     """
                 ).fetchall()
 
+            for row in rows:
+                row["expiry_alerts"] = driver_expiry_alerts(row)
+                row["missing_documents"] = [k for k in required_driver_documents(row["vehicle"]) if k not in row["uploaded_documents"]]
+                row["automation"] = application_triage(row, row["uploaded_documents"])
             return self.sendj(rows)
                     # SUIVI GPS CÔTÉ CLIENT
         if (
@@ -3149,6 +3403,28 @@ class App(SimpleHTTPRequestHandler):
             return
         if path != "/api/paytech/ipn" and not self.same_origin_request():
             return
+        if re.fullmatch(r"/api/admin/drivers/[^/]+/documents/[a-z]+/ocr", path):
+            user = self.auth()
+            if not user or user.get("role") != "admin":
+                return self.sendj({"error": "Non autorisé"}, 401)
+            if not self.check_rate("admin-ocr", 10, 60):
+                return
+            parts = path.split("/")
+            with db() as conn:
+                row = conn.execute("SELECT content,mime_type,uploaded_at FROM driver_documents WHERE driver_id=%s AND kind=%s", (parts[4], parts[6])).fetchone()
+            if not row:
+                return self.sendj({"error": "Document introuvable."}, 404)
+            try:
+                result = document_ocr.extract(bytes(row["content"]), row["mime_type"])
+            except Exception:
+                return self.sendj({"error": "Analyse impossible ou occupée. Vérifiez le fichier manuellement ou réessayez."}, 422)
+            with db() as conn:
+                current = conn.execute("SELECT content FROM driver_documents WHERE driver_id=%s AND kind=%s FOR UPDATE", (parts[4], parts[6])).fetchone()
+                if not current or bytes(current["content"]) != bytes(row["content"]):
+                    return self.sendj({"error": "Le document a changé. Relancez l’analyse."}, 409)
+                audit_event(conn, "admin", "Admin", "driver.document.ocr", "driver", parts[4], {"kind": parts[6], "pages": result["pages_processed"]})
+            return self.sendj({"ok": True, **result})
+
         if path in ("/api/driver/pin-reset/request", "/api/driver/pin-reset/confirm", "/api/driver/recovery-email/request", "/api/driver/recovery-email/confirm"):
             phone = normalize_phone(data.get("phone"), "SN")
             if not phone or not phone.startswith("+221"):
@@ -3235,14 +3511,18 @@ class App(SimpleHTTPRequestHandler):
                 return
             with db() as conn:
                 driver = conn.execute("SELECT * FROM drivers WHERE id=%s FOR UPDATE", (user.get("driver_id"),)).fetchone()
-                if not driver or driver["status"] != "pending":
-                    return self.sendj({"error": "Seul un dossier en attente peut être modifié."}, 409)
+                if not driver or driver["status"] not in ("pending", "approved"):
+                    return self.sendj({"error": "Seul un dossier validé ou en attente peut être modifié."}, 409)
                 try:
                     details = validate_application_details(data, driver["vehicle"])
                 except ValueError as exc:
                     return self.sendj({"error": str(exc)}, 400)
                 changed = {key for key in DRIVER_DETAIL_FIELDS if (driver.get(key) or "") != details[key]}
                 if changed:
+                    try:
+                        begin_document_renewal(conn, driver)
+                    except ValueError as exc:
+                        return self.sendj({"error": str(exc)}, 409)
                     # Changed references require the corresponding new piece, not an old file.
                     groups = {"licence": ("driving_licence_number", "driving_licence_expiry"),
                               "insurance": ("insurance_policy_number", "insurance_expiry"),
@@ -3265,8 +3545,10 @@ class App(SimpleHTTPRequestHandler):
                 driver = conn.execute("SELECT * FROM drivers WHERE id=%s FOR UPDATE", (user.get("driver_id"),)).fetchone()
                 if not driver:
                     return self.sendj({"error": "Dossier introuvable."}, 404)
-                if driver["status"] != "pending":
-                    return self.sendj({"error": "Seuls les dossiers en attente peuvent recevoir des pièces."}, 409)
+                try:
+                    begin_document_renewal(conn, driver)
+                except ValueError as exc:
+                    return self.sendj({"error": str(exc)}, 409)
                 conn.execute("""INSERT INTO driver_documents(driver_id,kind,filename,mime_type,content,uploaded_at)
                     VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(driver_id,kind) DO UPDATE SET
                     filename=EXCLUDED.filename,mime_type=EXCLUDED.mime_type,content=EXCLUDED.content,uploaded_at=EXCLUDED.uploaded_at""",
@@ -3478,7 +3760,7 @@ class App(SimpleHTTPRequestHandler):
                         return self.sendj({"error": "Recharge introuvable"}, 404)
 
                     try:
-                        paid_amount = int(float(effective_price))
+                        paid_amount = exact_xof_amount(effective_price)
                     except (TypeError, ValueError):
                         return self.sendj({"error": "Montant invalide"}, 400)
 
@@ -3526,7 +3808,7 @@ class App(SimpleHTTPRequestHandler):
                     return self.sendj({"error": "Réservation introuvable"}, 404)
 
                 try:
-                    paid_amount = int(float(effective_price))
+                    paid_amount = exact_xof_amount(effective_price)
                 except (TypeError, ValueError):
                     return self.sendj({"error": "Montant invalide"}, 400)
 
@@ -4460,6 +4742,10 @@ class App(SimpleHTTPRequestHandler):
                 ).fetchone()
                 if not row:
                     return self.sendj({"error": "Chauffeur introuvable"}, 404)
+                try:
+                    validate_application_details(row, row["vehicle"])
+                except ValueError as exc:
+                    return self.sendj({"error": str(exc)}, 400)
                 if not bool(row.get("compliance_verified")):
                     return self.sendj(
                         {"error": "Vérifiez d’abord le dossier réglementaire du chauffeur avant de l’accepter."},
@@ -5563,7 +5849,17 @@ if __name__ == "__main__":
     if PAYTECH_ENV not in ("test", "prod"):
         raise RuntimeError("PAYTECH_ENV doit être 'test' ou 'prod'")
 
+    # Existing Render services may not apply render.yaml build settings.
+    # Install into this deployment on startup as well, without administrator
+    # privileges. Never report a working deployment before the OCR smoke passes.
+    if not os.path.isfile(os.path.join(ROOT, ".ocr/ready")):
+        import subprocess
+        subprocess.run(["bash", os.path.join(ROOT, "install_ocr.sh")], check=True, timeout=180)
+    else:
+        document_ocr.smoke_test()
+
     init()
+    threading.Thread(target=expiry_reminder_worker, daemon=True, name="driver-expiry-reminders").start()
 
     ThreadingHTTPServer(
         ("0.0.0.0", PORT),

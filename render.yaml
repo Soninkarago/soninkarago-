@@ -2,6 +2,7 @@ services:
   - type: web
     name: soninkarago
     runtime: python
+    buildCommand: bash build.sh
     plan: free
     startCommand: python server.py
     healthCheckPath: /api/health
