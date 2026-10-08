@@ -18,7 +18,7 @@ import uuid
 import unicodedata
 import socket
 from decimal import Decimal, InvalidOperation
-from datetime import date
+from datetime import date, datetime, timezone
 import smtplib
 import ssl
 from email.message import EmailMessage
@@ -46,7 +46,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.08-v59-audit-ocr-expiry-admin"
+APP_VERSION = "2026.10.08-v60-deep-audit"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -277,6 +277,41 @@ def exact_xof_amount(value):
     return int(amount)
 
 
+COMPLIANCE_CHECKS = ("identity_checked", "documents_applicable_checked",
+                     "expiry_dates_checked", "vehicle_category_checked")
+
+
+def validate_compliance_checklist(value):
+    if not isinstance(value, dict) or any(value.get(key) is not True for key in COMPLIANCE_CHECKS):
+        raise ValueError("Confirmez explicitement les quatre contrôles du dossier. L’OCR ne valide pas son authenticité.")
+    return {key: True for key in COMPLIANCE_CHECKS}
+
+
+def validate_minicar_departure(day, hour, passengers, now=None):
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", day) or not re.fullmatch(r"[0-9]{2}:[0-9]{2}", hour):
+        raise ValueError("Indiquez une date et une heure de départ valides.")
+    try:
+        departure = datetime.strptime(day + " " + hour, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise ValueError("Indiquez une date et une heure de départ réelles.")
+    if departure <= (now or datetime.now(timezone.utc)):
+        raise ValueError("La date et l’heure de départ doivent être dans le futur (heure du Sénégal).")
+    count = exact_xof_amount(passengers)
+    if count > 14:
+        raise ValueError("Le nombre de passagers doit être un entier compris entre 1 et 14.")
+    return count
+
+
+def verified_paytech_redirect(value):
+    if not isinstance(value, str) or len(value) > 2048:
+        raise RuntimeError("Lien de paiement sécurisé invalide.")
+    parsed = urlparse(value)
+    host = parsed.hostname or ""
+    if parsed.scheme != "https" or not (host == "paytech.sn" or host.endswith(".paytech.sn")) or parsed.username or parsed.password or parsed.port not in (None, 443):
+        raise RuntimeError("Lien de paiement sécurisé invalide.")
+    return value
+
+
 def recovery_code_hash(challenge_hash, code):
     return hmac.new(AUTH_SECRET.encode(), (challenge_hash + ":" + code).encode(), hashlib.sha256).hexdigest()
 
@@ -398,9 +433,9 @@ def audit_event(conn, actor_role, actor_id, action, entity_type="", entity_id=""
                 INSTANCE_ID[:120],
             )
         )
-    except Exception as exc:
+    except Exception:
         # Audit logging must never expose sensitive details in HTTP responses.
-        print("audit_event error:", repr(exc))
+        print("Audit trail unavailable", flush=True)
 
 
 def payment_event_once(conn, provider, event_key, reference, event_type, amount, payload_summary):
@@ -429,7 +464,7 @@ def payment_event_once(conn, provider, event_key, reference, event_type, amount,
         ).fetchone()
         return bool(row)
     except Exception as exc:
-        print("payment_event_once error:", repr(exc))
+        print("Payment event register unavailable", flush=True)
         # Existing state checks still protect against duplicate balance changes.
         return True
 
@@ -1275,15 +1310,15 @@ def request_paytech_payment(ride_id, route, amount, payment, client_name):
             detail = json.loads(exc.read().decode()).get("message", "")
         except Exception:
             detail = ""
-        raise RuntimeError(detail or "PayTech a refusé le paiement") from exc
+        raise RuntimeError("PayTech a refusé le paiement. Réessayez plus tard ou contactez l’assistance.") from exc
     except (URLError, TimeoutError) as exc:
         raise RuntimeError("PayTech est temporairement indisponible") from exc
 
     payment_url = result.get("redirect_url") or result.get("redirectUrl")
     if result.get("success") not in (1, True) or not payment_url:
-        raise RuntimeError(result.get("message") or "Impossible de créer le paiement")
+        raise RuntimeError("Impossible de créer le paiement sécurisé.")
 
-    return payment_url
+    return verified_paytech_redirect(payment_url)
 
 
 def request_paytech_recharge(recharge_id, amount, payment, driver_id):
@@ -1334,15 +1369,15 @@ def request_paytech_recharge(recharge_id, amount, payment, driver_id):
             detail = json.loads(exc.read().decode()).get("message", "")
         except Exception:
             detail = ""
-        raise RuntimeError(detail or "PayTech a refusé la recharge") from exc
+        raise RuntimeError("PayTech a refusé la recharge. Réessayez plus tard ou contactez l’assistance.") from exc
     except (URLError, TimeoutError) as exc:
         raise RuntimeError("PayTech est temporairement indisponible") from exc
 
     payment_url = result.get("redirect_url") or result.get("redirectUrl")
     if result.get("success") not in (1, True) or not payment_url:
-        raise RuntimeError(result.get("message") or "Impossible de créer la recharge")
+        raise RuntimeError("Impossible de créer la recharge sécurisée.")
 
-    return payment_url
+    return verified_paytech_redirect(payment_url)
 
 
 ROUTES = {
@@ -1583,8 +1618,8 @@ def begin_document_renewal(conn, driver):
     """Renewal suspends new rides and requires a fresh administrator review."""
     if driver.get("status") == "pending":
         return
-    if driver.get("status") != "approved":
-        raise ValueError("Seul un dossier validé ou en attente peut être modifié.")
+    if driver.get("status") not in ("approved", "rejected"):
+        raise ValueError("Seul un dossier validé, refusé ou en attente peut être modifié.")
     active = conn.execute("SELECT id FROM rides WHERE driver_id=%s AND status IN ('accepted','arriving','in_progress','deposit_paid','fully_paid') LIMIT 1", (driver["id"],)).fetchone()
     if active:
         raise ValueError("Terminez votre course active avant de renouveler vos documents.")
@@ -1641,6 +1676,10 @@ def validate_driver_document(data):
         mime, extension = "image/png", "png"
     else:
         raise ValueError("Choisissez un fichier PDF, JPEG ou PNG valide.")
+    try:
+        document_ocr.inspect_document(content, mime)
+    except (ValueError, RuntimeError):
+        raise ValueError("Fichier illisible, trop complexe ou analyse occupée. Choisissez une pièce lisible et réessayez.")
     return kind, mime, kind + "." + extension, content
 
 
@@ -2495,6 +2534,9 @@ def dispatch_pending_rides(conn):
         assign_next_driver(conn, ride["id"], now)
 
 class App(SimpleHTTPRequestHandler):
+    def setup(self):
+        self.request.settimeout(15)
+        super().setup()
     server_version = "SoninkaraGo"
     sys_version = ""
 
@@ -2554,6 +2596,17 @@ class App(SimpleHTTPRequestHandler):
             {"error": "Trop de tentatives. Réessayez plus tard."},
             429
         )
+        return False
+
+    def check_driver_login_rate(self, phone):
+        # An account limit is shared by both login routes and all source IPs.
+        # Normalize first so national/international spellings cannot bypass it.
+        identity = hashlib.sha256((phone or "invalid").encode()).hexdigest()
+        if not self.check_rate("driver-login-ip", 30, 600):
+            return False
+        if allow_request_shared("driver-login-account:" + identity, 8, 600):
+            return True
+        self.sendj({"error": "Trop de tentatives. Réessayez plus tard."}, 429)
         return False
 
     def same_origin_request(self):
@@ -3492,7 +3545,7 @@ class App(SimpleHTTPRequestHandler):
 
         if path == "/api/driver/application/login":
             phone = normalize_phone(data.get("phone"), data.get("phone_region", "SN"))
-            if not self.check_rate("driver-login", 8, 600, phone or "invalid"):
+            if not self.check_driver_login_rate(phone):
                 return
             pin = str(data.get("pin", "")).strip()
             with db() as conn:
@@ -3511,8 +3564,8 @@ class App(SimpleHTTPRequestHandler):
                 return
             with db() as conn:
                 driver = conn.execute("SELECT * FROM drivers WHERE id=%s FOR UPDATE", (user.get("driver_id"),)).fetchone()
-                if not driver or driver["status"] not in ("pending", "approved"):
-                    return self.sendj({"error": "Seul un dossier validé ou en attente peut être modifié."}, 409)
+                if not driver or driver["status"] not in ("pending", "approved", "rejected"):
+                    return self.sendj({"error": "Seul un dossier validé, refusé ou en attente peut être modifié."}, 409)
                 try:
                     details = validate_application_details(data, driver["vehicle"])
                 except ValueError as exc:
@@ -3567,7 +3620,7 @@ class App(SimpleHTTPRequestHandler):
                 driver = conn.execute("SELECT * FROM drivers WHERE id=%s FOR UPDATE", (user.get("driver_id"),)).fetchone()
                 if not driver or not verify_pin(str(data.get("pin", "")),driver["pin_hash"],driver["pin_salt"]):
                     return self.sendj({"error": "PIN incorrect"}, 401)
-                if driver["status"] not in ("pending", "rejected"):
+                if driver["status"] not in ("pending", "rejected", "suspended"):
                     return self.sendj({"error": "Connectez-vous à votre compte chauffeur pour le supprimer."}, 409)
                 active = conn.execute("SELECT COUNT(*) AS n FROM rides WHERE driver_id=%s AND status IN ('accepted','arriving','in_progress','deposit_paid','fully_paid')", (driver["id"],)).fetchone()
                 if active["n"]:
@@ -3768,6 +3821,9 @@ class App(SimpleHTTPRequestHandler):
                         return self.sendj({"error": "Montant incorrect"}, 409)
 
                     if event == "sale_complete":
+                        if recharge["status"] not in ("pending", "paid"):
+                            audit_event(conn, "paytech", "", "payment.late", "recharge", ref_command, {"amount": paid_amount, "status": recharge["status"]}, outcome="manual_review")
+                            return self.sendj({"error": "Recharge clôturée : paiement à vérifier manuellement."}, 409)
                         if recharge["status"] == "pending":
                             conn.execute(
                                 """
@@ -3817,7 +3873,8 @@ class App(SimpleHTTPRequestHandler):
                     return self.sendj({"error": "Montant incorrect"}, 409)
 
                 if event == "sale_complete":
-                    if ride.get("status") in ("cancelled", "canceled"):
+                    if ride.get("status") in ("cancelled", "canceled", "payment_failed", "payment_canceled"):
+                        audit_event(conn, "paytech", "", "payment.late", "ride", ref_command, {"amount": paid_amount, "status": ride.get("status")}, outcome="manual_review")
                         return self.sendj({
                             "error": "Réservation annulée : paiement à vérifier manuellement."
                         }, 409)
@@ -4007,9 +4064,9 @@ class App(SimpleHTTPRequestHandler):
                 return
 
             try:
-                amount = int(data.get("amount", 0))
-            except:
-                amount = 0
+                amount = exact_xof_amount(data.get("amount", 0))
+            except (TypeError, ValueError):
+                return self.sendj({"error": "Indiquez un montant entier valide en F CFA."}, 400)
 
             payment = str(
                 data.get("payment", "")
@@ -4334,16 +4391,13 @@ class App(SimpleHTTPRequestHandler):
 
         # CONNEXION CHAUFFEUR
         if path == "/api/login/driver":
-
-            if not self.check_rate(
-                "driver-login", 8, 600, str(data.get("phone", ""))
-            ):
-                return
-
             raw_phone = str(data.get("phone", "")).strip()
             phone = normalize_phone(
                 raw_phone, data.get("phone_region", "SN")
             )
+
+            if not self.check_driver_login_rate(phone):
+                return
 
             if not phone:
                 return self.sendj(
@@ -4444,6 +4498,8 @@ class App(SimpleHTTPRequestHandler):
 
         # EXERCICE DES DROITS SUR LES DONNÉES PERSONNELLES
         if path == "/api/privacy/request":
+            if not self.check_rate("privacy-request", 5, 3600):
+                return
             request_type = str(data.get("request_type", "")).strip().lower()
             if request_type not in ("access", "rectification", "deletion", "opposition"):
                 return self.sendj({"error": "Type de demande invalide"}, 400)
@@ -4588,7 +4644,7 @@ class App(SimpleHTTPRequestHandler):
             with db() as conn:
                 rides = conn.execute(
                     """
-                    SELECT id,fare,deposit_amount,balance_due,payment_status,status,
+                    SELECT id,fare,deposit_amount,balance_due,payment,payment_status,status,
                            deposit_paid_at,balance_paid_at,created_at
                     FROM rides
                     WHERE created_at >= %s
@@ -4611,7 +4667,7 @@ class App(SimpleHTTPRequestHandler):
             for r in rides:
                 if r.get("payment_status") in ("deposit_paid","fully_paid") and not r.get("deposit_paid_at"):
                     anomalies.append({"type":"ride_missing_paid_timestamp","id":r["id"]})
-                if r.get("status") == "searching" and r.get("payment_status") == "unpaid":
+                if r.get("payment") in ("Wave", "Orange Money") and r.get("status") == "searching" and r.get("payment_status") == "unpaid":
                     anomalies.append({"type":"ride_searching_unpaid","id":r["id"]})
             for x in recharges:
                 if x.get("status") == "paid" and not x.get("paid_at"):
@@ -4635,6 +4691,10 @@ class App(SimpleHTTPRequestHandler):
                 return self.sendj({"error": "Non autorisé"}, 401)
 
             driver_id = path.split("/")[4]
+            try:
+                checklist = validate_compliance_checklist(data.get("checklist"))
+            except ValueError as exc:
+                return self.sendj({"error": str(exc)}, 400)
             with db() as conn:
                 row = conn.execute(
                     """
@@ -4687,12 +4747,6 @@ class App(SimpleHTTPRequestHandler):
                         return self.sendj({"error": "Document expiré : " + label}, 400)
 
                 notes = str(data.get("notes", ""))[:1500]
-                checklist = data.get("checklist") or {
-                    "identity_checked": True,
-                    "documents_applicable_checked": True,
-                    "expiry_dates_checked": True,
-                    "vehicle_category_checked": True,
-                }
                 now = int(time.time())
                 conn.execute(
                     """
@@ -4848,6 +4902,8 @@ class App(SimpleHTTPRequestHandler):
                 "ride-create", 30, 3600, str(data.get("phone", ""))
             ):
                 return
+            if data.get("terms_accepted") is not True or data.get("privacy_accepted") is not True:
+                return self.sendj({"error": "Acceptez les conditions et la politique de confidentialité avant de commander."}, 400)
 
             route_code = str(
                 data.get("route_code", "")
@@ -4908,6 +4964,10 @@ class App(SimpleHTTPRequestHandler):
                 passenger_count = 1
 
             if is_minicar:
+                try:
+                    passenger_count = validate_minicar_departure(departure_date, departure_time, data.get("passenger_count", 1))
+                except (TypeError, ValueError) as exc:
+                    return self.sendj({"error": str(exc)}, 400)
                 if not departure_date:
                     return self.sendj(
                         {"error": "Date de départ obligatoire"},
@@ -5629,9 +5689,6 @@ class App(SimpleHTTPRequestHandler):
                         404
                     )
 
-                if ride["route_code"] == "dakar_car":
-                    return self.sendj({"error": "Le lieu de départ de cette course est fixe."}, 409)
-
                 if not hmac.compare_digest(
                     str(ride.get("tracking_token") or ""),
                     tracking_token
@@ -5641,9 +5698,12 @@ class App(SimpleHTTPRequestHandler):
                         401
                     )
 
-                if ride["status"] == "completed":
+                if ride["route_code"] == "dakar_car" or str(ride["route_code"] or "").startswith("urban_car_") or ride["route_code"] in LOCAL_SERVICE_CONFIG:
+                    return self.sendj({"error": "Le départ validé dans le devis de cette course est fixe."}, 409)
+
+                if ride["status"] not in ("searching", "accepted", "arriving", "in_progress", "deposit_paid", "fully_paid"):
                     return self.sendj(
-                        {"error": "Course terminée"},
+                        {"error": "Course non active"},
                         409
                     )
 
@@ -5834,6 +5894,36 @@ class App(SimpleHTTPRequestHandler):
         )
 
 
+class BoundedHTTPServer(ThreadingHTTPServer):
+    """Limit concurrent handlers instead of allocating an unbounded thread/DB set."""
+    daemon_threads = True
+
+    def __init__(self, *args, **kwargs):
+        self.slots = threading.BoundedSemaphore(16)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            try:
+                request.settimeout(1)
+                body = b'{"error":"Service temporairement occupe"}'
+                request.sendall(b'HTTP/1.0 503 Service Unavailable\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nRetry-After: 5\r\nContent-Length: ' + str(len(body)).encode() + b'\r\n\r\n' + body)
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
+
+
 if __name__ == "__main__":
 
     if not DATABASE_URL:
@@ -5861,7 +5951,7 @@ if __name__ == "__main__":
     init()
     threading.Thread(target=expiry_reminder_worker, daemon=True, name="driver-expiry-reminders").start()
 
-    ThreadingHTTPServer(
+    BoundedHTTPServer(
         ("0.0.0.0", PORT),
         App
     ).serve_forever()

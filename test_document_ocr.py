@@ -34,6 +34,18 @@ class DocumentOCR(unittest.TestCase):
         self.assertEqual(result['pages_processed'], 2)
         self.assertTrue(result['truncated'])
 
+    def test_fake_pdf_envelope_is_rejected_on_upload(self):
+        import server
+        import base64
+        envelope=b'%PDF-1.4\nnot a real PDF\n%%EOF\n'
+        with self.assertRaises(ValueError):
+            server.validate_driver_document({'kind':'licence','content_base64':base64.b64encode(envelope).decode()})
+
+    def test_readable_upload_still_requires_manual_review(self):
+        image=Image.new('RGB',(400,100),'white');out=io.BytesIO();image.save(out,'PNG')
+        result=ocr.inspect_document(out.getvalue(),'image/png')
+        self.assertTrue(result['structurally_readable']);self.assertTrue(result['manual_review_required'])
+
     def test_invalid_dates_are_not_suggested(self):
         self.assertEqual(ocr.candidates('31/02/2027 31/12/2027 2027-12-31'), ['2027-12-31'])
 
