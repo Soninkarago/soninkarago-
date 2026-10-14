@@ -34,7 +34,7 @@ def ensure_code(conn,ride_id):
 def trust_fields(conn,ride):
     code=conn.execute('SELECT * FROM journey_codes WHERE ride_id=%s',(ride['id'],)).fetchone()
     route=conn.execute('SELECT route_polyline,quote_token,stops FROM journey_routes WHERE ride_id=%s',(ride['id'],)).fetchone()
-    profile=conn.execute("SELECT p.* FROM driver_profiles p JOIN drivers d ON d.id=p.driver_id WHERE p.driver_id=%s AND p.status='approved' AND p.plate=d.vehicle_plate",(ride.get('driver_id') or '',)).fetchone()
+    profile=conn.execute("SELECT p.* FROM driver_profiles p JOIN drivers d ON d.id=p.driver_id WHERE p.driver_id=%s AND p.status='approved' AND UPPER(p.plate)=UPPER(d.vehicle_plate)",(ride.get('driver_id') or '',)).fetchone()
     rating=conn.execute('SELECT AVG(stars) AS average,COUNT(*) AS count FROM journey_ratings WHERE driver_id=%s',(ride.get('driver_id') or '',)).fetchone()
     recovered={**dict(route),'stops':json.loads(route['stops'])} if route else {}
     return {**recovered,'pickup_code':code['code'] if code and ride.get('status') in ('searching','offered','accepted','arriving') else None,
@@ -73,7 +73,7 @@ def handle_post(app,path,data,db):
         with db() as conn:
             conn.execute('SELECT id FROM drivers WHERE id=%s FOR UPDATE',(review[1],)).fetchone()
             profile=conn.execute('SELECT p.plate,d.vehicle_plate FROM driver_profiles p JOIN drivers d ON d.id=p.driver_id WHERE p.driver_id=%s',(review[1],)).fetchone()
-            if not profile or profile['plate']!=profile['vehicle_plate']:app.sendj({'error':'Le véhicule a changé. Demandez de nouvelles photos.'},409);return True
+            if not profile or str(profile['plate']).upper()!=str(profile['vehicle_plate']).upper():app.sendj({'error':'Le véhicule a changé. Demandez de nouvelles photos.'},409);return True
             changed=conn.execute("UPDATE driver_profiles SET status=%s,reviewed_at=%s WHERE driver_id=%s AND updated_at=%s AND status='pending'",(status,int(time.time()),review[1],version)).rowcount
         app.sendj({'ok':bool(changed)},200 if changed else 409);return True
     if not match:return False

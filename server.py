@@ -1634,6 +1634,7 @@ DRIVER_DETAIL_FIELDS = ("driving_licence_number", "driving_licence_expiry", "ins
 
 def validate_application_details(data, vehicle):
     details = {key: str(data.get(key, "")).strip()[:150] for key in DRIVER_DETAIL_FIELDS}
+    details["vehicle_plate"] = details["vehicle_plate"].upper()
     for key in ("driving_licence_expiry", "insurance_expiry", "technical_inspection_expiry"):
         value = details[key]
         if not value and key == "technical_inspection_expiry" and vehicle != "Voiture taxi":
@@ -2530,7 +2531,7 @@ def assign_next_driver(conn, ride_id, now=None):
 
     modern=conn.execute('SELECT ride_id FROM journey_codes WHERE ride_id=%s',(ride_id,)).fetchone()
     if modern:
-        verified={p['driver_id'] for p in conn.execute("SELECT p.driver_id FROM driver_profiles p JOIN drivers d ON d.id=p.driver_id WHERE p.status='approved' AND p.plate=d.vehicle_plate").fetchall()}
+        verified={p['driver_id'] for p in conn.execute("SELECT p.driver_id FROM driver_profiles p JOIN drivers d ON d.id=p.driver_id WHERE p.status='approved' AND UPPER(p.plate)=UPPER(d.vehicle_plate)").fetchall()}
         drivers=[d for d in drivers if d['id'] in verified]
 
     urban_zone_code = None
@@ -3157,12 +3158,12 @@ class App(SimpleHTTPRequestHandler):
                 "driver_name": row.get("driver_name", ""),
                 "driver_phone": (
                     row.get("driver_phone", "")
-                    if row.get("status") in ("accepted", "arriving", "in_progress")
+                    if row.get("status") in journey_experience.ACTIVE
                     else ""
                 ),
                 "driver_location_at": row.get("driver_location_at"),
-                "driver_lat": row.get("driver_lat") if driver_gps_fresh and row.get("status") in ("accepted", "arriving", "in_progress") else None,
-                "driver_lng": row.get("driver_lng") if driver_gps_fresh and row.get("status") in ("accepted", "arriving", "in_progress") else None,
+                "driver_lat": row.get("driver_lat") if driver_gps_fresh and row.get("status") in journey_experience.ACTIVE else None,
+                "driver_lng": row.get("driver_lng") if driver_gps_fresh and row.get("status") in journey_experience.ACTIVE else None,
                 "client_lat": row.get("client_lat"),
                 "client_lng": row.get("client_lng"),
                 "eta_seconds": eta_seconds,
@@ -3523,7 +3524,7 @@ class App(SimpleHTTPRequestHandler):
                 "driver_name": ride.get("driver_name", ""),
                 "driver_phone": (
                     ride.get("driver_phone", "")
-                    if ride.get("status") in ("accepted", "arriving", "in_progress")
+                    if ride.get("status") in journey_experience.ACTIVE
                     else ""
                 ),
                 "driver_lat": ride.get("driver_lat"),
@@ -3805,7 +3806,7 @@ class App(SimpleHTTPRequestHandler):
             except Exception:
                 # Do not expose credentials, server errors or message contents.
                 return self.sendj({"error": "L’envoi est momentanément indisponible. Votre message n’a pas été confirmé. Vous pouvez écrire directement à contact@soninkarago.sn."}, 503)
-            return self.sendj({"ok": True, "message": "Merci ! Votre message a été transmis à notre messagerie."})
+            return self.sendj({"ok": True, "email_delivered": True, "message": "Merci ! Votre message a été transmis à notre messagerie."})
         if path == "/api/push/subscribe":
             if not self.check_rate("push-subscribe", 10, 3600):
                 return
@@ -5541,7 +5542,7 @@ class App(SimpleHTTPRequestHandler):
                 if modern:
                     if data.get('pickup_code_supported') is not True:
                         return self.sendj({'error':'Mettez à jour l’application chauffeur pour accepter les courses avec code de prise en charge.'},409)
-                    profile=conn.execute("SELECT p.driver_id FROM driver_profiles p JOIN drivers d ON d.id=p.driver_id WHERE p.driver_id=%s AND p.status='approved' AND p.plate=d.vehicle_plate",(driver_id,)).fetchone()
+                    profile=conn.execute("SELECT p.driver_id FROM driver_profiles p JOIN drivers d ON d.id=p.driver_id WHERE p.driver_id=%s AND p.status='approved' AND UPPER(p.plate)=UPPER(d.vehicle_plate)",(driver_id,)).fetchone()
                     if not profile:
                         return self.sendj({'error':'Faites vérifier votre photo et votre véhicule avant d’accepter cette course.'},409)
 
