@@ -6,15 +6,15 @@ from unittest.mock import patch
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 from PIL import Image
-import server,passenger_history,booking_requests,journey_experience as journey,journey_support as support,journey_chat as chat
+import server,passenger_account,ride_refunds,passenger_history,booking_requests,journey_experience as journey,journey_support as support,journey_chat as chat
 
 class JourneyHTTP(unittest.TestCase):
  def setUp(self):
   self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.path=Path(self.temp.name)/'journey.db'
   columns=re.search(r'INSERT INTO rides\((.*?)\)\s*VALUES',Path(server.__file__).read_text(),re.S).group(1)
   with sqlite3.connect(self.path) as c:
-   c.execute('CREATE TABLE rides('+','.join(n.strip()+' TEXT' for n in columns.split(','))+',driver_id TEXT,offered_driver_id TEXT,offer_expires_at BIGINT,driver_lat REAL,driver_lng REAL,driver_location_at BIGINT,eta_seconds INT,eta_calculated_at BIGINT,eta_driver_location_at BIGINT,eta_distance_meters INT)')
-   for schema in passenger_history.SCHEMAS+journey.SCHEMAS+(support.SCHEMA,support.REQUEST_SCHEMA,chat.SCHEMA,booking_requests.SCHEMA):c.execute(schema)
+   c.execute('CREATE TABLE rides('+','.join(n.strip()+' TEXT' for n in columns.split(','))+',passenger_payment_url TEXT,driver_id TEXT,offered_driver_id TEXT,offer_expires_at BIGINT,driver_lat REAL,driver_lng REAL,driver_location_at BIGINT,eta_seconds INT,eta_calculated_at BIGINT,eta_driver_location_at BIGINT,eta_distance_meters INT)')
+   for schema in passenger_account.SCHEMAS+ride_refunds.SCHEMAS+passenger_history.SCHEMAS+journey.SCHEMAS+(support.SCHEMA,support.REQUEST_SCHEMA,chat.SCHEMA,booking_requests.SCHEMA):c.execute(schema)
    c.execute('CREATE TABLE support_requests(id TEXT PRIMARY KEY,ride_id TEXT,phone TEXT,category TEXT,message TEXT,status TEXT,created_at BIGINT)')
    c.execute('CREATE TABLE drivers(id TEXT PRIMARY KEY,name TEXT,phone TEXT,status TEXT,vehicle TEXT,vehicle_plate TEXT,balance INT,compliance_verified BOOLEAN,driving_licence_number TEXT,driving_licence_expiry TEXT,insurance_policy_number TEXT,insurance_expiry TEXT,registration_card_number TEXT)')
    c.execute("INSERT INTO drivers VALUES('D','Chauffeur fictif','770000001','approved','Moto-taxi','TEST-123',10000,TRUE,'P','2099-01-01','I','2099-01-01','C')")

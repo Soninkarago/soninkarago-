@@ -25,8 +25,8 @@ Espèces, Wave et Orange Money uniquement. Tarifs, commission et couverture nati
 
 ## Limites explicites
 
-Le propriétaire a demandé de ne pas créer de service SMS. La préparation SMS a été retirée entièrement. Aucun compte passager vérifié par téléphone n’est donc livré ; le parcours de réservation et l’historique privé existants restent disponibles.
+Le propriétaire a demandé de ne pas créer de service SMS. La préparation SMS a été retirée entièrement. Le téléphone reste non vérifié. Un compte facultatif récupérable par code e-mail est ajouté dans la mise à jour suivante ; voir ACCOUNT_REFUNDS_VALIDATION.md.
 
-Aucun remboursement automatique n’est introduit. Les demandes financières doivent être vérifiées et traitées dans les outils du prestataire et de l’assistance. Les nouveaux rapports sont des rapports de course, pas des reçus bancaires ni des factures.
+La mise à jour suivante ajoute les demandes de remboursement pré-prise en charge, leur rapprochement prestataire et leur suivi ; voir ACCOUNT_REFUNDS_VALIDATION.md. Les résultats incertains et les espèces restent à vérifier par l’assistance. Les nouveaux rapports sont des rapports de course, pas des reçus bancaires ni des factures.
 
 Les appels restent directs, avec numéros visibles. Aucun centre humain d’urgence 24 h/24, masquage des appels, délai garanti d’attribution ou garantie de disponibilité terrain n’est annoncé. La parité intégrale avec Uber n’est pas établie.

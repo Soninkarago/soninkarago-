@@ -2,6 +2,8 @@ import journey_assistant
 import journey_chat
 import passenger_history
 import journey_service
+import passenger_account
+import ride_refunds
 import journey_support
 import journey_notifications
 import journey_events
@@ -56,7 +58,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.14-v71-course-service"
+APP_VERSION = "2026.10.14-v72-passenger-refunds"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -288,6 +290,21 @@ def expiry_reminder_worker():
         except Exception:
             print("Driver expiry reminder worker unavailable", flush=True)
         stop.wait(60)
+
+
+
+def deliver_passenger_code(recipient,code):
+    user=os.environ['CONTACT_SMTP_USER'];mode=os.environ.get('CONTACT_SMTP_SECURITY','ssl').lower()
+    message=EmailMessage();message['From']=os.environ.get('CONTACT_SMTP_FROM',user);message['To']=recipient
+    message['Subject']='SoninkaraGo — Votre code de connexion'
+    message.set_content('Votre code de connexion SoninkaraGo : '+code+'\n\nValable 10 minutes. Ne le partagez pas. Si vous n’avez pas demandé ce code, ignorez ce message.')
+    context=ssl.create_default_context();client_class=smtplib.SMTP_SSL if mode=='ssl' else smtplib.SMTP
+    kwargs={'timeout':15};
+    if mode=='ssl':kwargs['context']=context
+    with client_class(os.environ['CONTACT_SMTP_HOST'],int(os.environ.get('CONTACT_SMTP_PORT','465' if mode=='ssl' else '587')),**kwargs) as client:
+        if mode=='starttls':client.ehlo();client.starttls(context=context);client.ehlo()
+        client.login(user,os.environ['CONTACT_SMTP_PASSWORD'])
+        if client.send_message(message):raise RuntimeError('Code delivery unavailable')
 
 
 def recovery_email_configured():
@@ -1332,6 +1349,7 @@ def request_paytech_payment(ride_id, route, amount, payment, client_name):
         "env": PAYTECH_ENV if PAYTECH_ENV in ("test", "prod") else "prod",
         "target_payment": target_payment,
         "ipn_url": f"{PUBLIC_BASE_URL}/api/paytech/ipn",
+        "refund_notif_url": f"{PUBLIC_BASE_URL}/api/paytech/refund-ipn",
         "success_url": f"{PUBLIC_BASE_URL}/paiement/succes",
         "cancel_url": f"{PUBLIC_BASE_URL}/paiement/annule",
         "custom_field": json.dumps({
@@ -1779,6 +1797,8 @@ def db():
 def init():
     with db() as conn:
         conn.execute(journey_chat.SCHEMA)
+        for schema in passenger_account.SCHEMAS + ride_refunds.SCHEMAS:
+            conn.execute(schema)
         for schema in passenger_history.SCHEMAS:
             conn.execute(schema)
         conn.execute(journey_support.SCHEMA)
@@ -1807,6 +1827,7 @@ def init():
                 created_at BIGINT
             )
         """) 
+        conn.execute("ALTER TABLE rides ADD COLUMN IF NOT EXISTS passenger_payment_url TEXT")
         conn.execute("""
             ALTER TABLE rides
             ADD COLUMN IF NOT EXISTS driver_id TEXT
@@ -3149,8 +3170,11 @@ class App(SimpleHTTPRequestHandler):
 
             driver_gps_fresh=bool(driver_gps_fresh and 0<=int(time.time())-driver_loc_at<=60)
             if not driver_gps_fresh:eta_seconds=None;eta_distance_meters=None;eta_calculated_at=None;eta_source='unavailable'
+            with db() as conn:
+                cancellation=ride_refunds.preview(conn,row)
+                refund_fields=ride_refunds.fields(conn,ride_id)
             return self.sendj({
-                **trust,
+                **trust, **refund_fields,
                 "id": row.get("id", ride_id),
                 "pickup": row.get("pickup", ""),
                 "destination": row.get("destination", ""),
@@ -3178,11 +3202,8 @@ class App(SimpleHTTPRequestHandler):
                 "deposit_amount": row.get("deposit_amount", 0),
                 "balance_due": row.get("balance_due", 0),
                 "created_at": row.get("created_at"),
-                "cancellation": journey_service.cancellation(row),
-                "can_cancel": (
-                    row.get("status") in ("searching", "offered", "payment_failed", "payment_canceled")
-                    and row.get("payment_status", "unpaid") in ("unpaid", "failed")
-                )
+                "cancellation": cancellation,
+                "can_cancel": cancellation['automatic']
             })
 
 
@@ -3612,9 +3633,13 @@ class App(SimpleHTTPRequestHandler):
         data = self.body(12 * 1024 * 1024 if path == "/api/driver/profile" else 6 * 1024 * 1024 if path == "/api/driver/application/documents" else 65536)
         if data is None:
             return
-        if path != "/api/paytech/ipn" and not self.same_origin_request():
+        if path not in ("/api/paytech/ipn", "/api/paytech/refund-ipn") and not self.same_origin_request():
             return
         if journey_assistant.handle_post(self,path,data,db):
+            return
+        if path == '/api/paytech/refund-ipn':
+            return ride_refunds.handle_notification(self,data,db,PAYTECH_API_KEY,PAYTECH_API_SECRET,exact_xof_amount,PAYTECH_ENV)
+        if passenger_account.handle_post(self,path,data,db,AUTH_SECRET,valid_recovery_email,recovery_email_configured,deliver_passenger_code,allow_request_shared):
             return
         if passenger_history.handle_post(self,path,data,db,AUTH_SECRET):
             return
@@ -4072,6 +4097,12 @@ class App(SimpleHTTPRequestHandler):
                     return self.sendj({"error": "Montant incorrect"}, 409)
 
                 if event == "sale_complete":
+                    if ride.get("status") in ('cancelled','canceled'):
+                        cancelled_payment=conn.execute('SELECT status FROM ride_refunds WHERE ride_id=%s',(ref_command,)).fetchone()
+                        if cancelled_payment:
+                            if payment_event_once(conn,"paytech",event_key,ref_command,event,paid_amount,{"env":callback_env,"currency":callback_currency}):
+                                ride_refunds.record_payment(conn,ride,paid_amount,data.get('token'))
+                            return self.sendj({'ok':True,'refund_pending':True})
                     if ride.get("status") in ("cancelled", "canceled", "payment_failed", "payment_canceled"):
                         audit_event(conn, "paytech", "", "payment.late", "ride", ref_command, {"amount": paid_amount, "status": ride.get("status")}, outcome="manual_review")
                         return self.sendj({
@@ -4079,6 +4110,7 @@ class App(SimpleHTTPRequestHandler):
                         }, 409)
                     if not payment_event_once(conn,"paytech",event_key,ref_command,event,paid_amount,{"env":callback_env,"currency":callback_currency}):
                         return self.sendj({"ok":True,"duplicate":True})
+                    ride_refunds.record_payment(conn,ride,paid_amount,data.get('token'))
                     conn.execute(
                         """
                         UPDATE rides
@@ -4109,69 +4141,18 @@ class App(SimpleHTTPRequestHandler):
             return self.sendj({"ok": True})
 
 
-        # CLIENT : annulation avant acceptation / avant paiement validé.
-        if (
-            path.startswith("/api/rides/")
-            and path.endswith("/cancel")
-        ):
-            if not self.check_rate("ride-cancel", 10, 3600):
-                return
-            ride_id = path.split("/")[3]
-            tracking_token = str(data.get("tracking_token") or "").strip()
-            reason = str(data.get("reason") or "Annulation client").strip()[:180]
-
+        # Passenger cancellation and refund are separate, durable operations.
+        if re.fullmatch(r'/api/rides/[^/]+/cancel',path):
+            if not self.check_rate('ride-cancel',10,3600):return
+            ride_id=path.split('/')[3]
             with db() as conn:
-                ride = conn.execute(
-                    """
-                    SELECT id, status, payment_status, tracking_token
-                    FROM rides
-                    WHERE id=%s
-                    FOR UPDATE
-                    """,
-                    (ride_id,)
-                ).fetchone()
-
-                if not ride:
-                    return self.sendj({"error": "Course introuvable"}, 404)
-
-                if not tracking_token or not hmac.compare_digest(
-                    str(ride.get("tracking_token") or ""),
-                    tracking_token
-                ):
-                    return self.sendj({"error": "Non autorisé"}, 401)
-
-                if ride["status"] in ("cancelled", "canceled"):
-                    return self.sendj({"ok": True, "status": "cancelled"})
-
-                if ride["status"] in ("accepted", "arriving", "in_progress", "completed"):
-                    return self.sendj({
-                        "error": "La course ne peut plus être annulée automatiquement à ce stade."
-                    }, 409)
-
-                if ride.get("payment_status") not in ("unpaid", "failed"):
-                    return self.sendj({
-                        "error": "Un paiement a déjà été enregistré. L'annulation automatique est bloquée pour protéger votre paiement."
-                    }, 409)
-
-                if ride["status"] == "awaiting_payment":
-                    return self.sendj({
-                        "error": "Terminez ou annulez d'abord le paiement sécurisé en cours."
-                    }, 409)
-
-                conn.execute(
-                    """
-                    UPDATE rides
-                    SET status='cancelled',
-                        cancelled_at=%s,
-                        cancel_reason=%s,
-                        offered_driver_id=NULL,
-                        offer_expires_at=NULL
-                    WHERE id=%s
-                    """,
-                    (int(time.time()), reason, ride_id)
-                )
-
-            return self.sendj({"ok": True, "status": "cancelled"})
+                ride=conn.execute('SELECT * FROM rides WHERE id=%s FOR UPDATE',(ride_id,)).fetchone()
+                if not ride:return self.sendj({'error':'Course introuvable'},404)
+                token=str(data.get('tracking_token') or '')
+                if not token or not hmac.compare_digest(str(ride.get('tracking_token') or ''),token):return self.sendj({'error':'Non autorisé'},401)
+                try:result=ride_refunds.cancel(conn,ride,str(data.get('reason') or 'Annulation client')[:180])
+                except ValueError as error:return self.sendj({'error':str(error)},409)
+            return self.sendj(result)
 
         # CLIENT : signaler un problème sans appeler un numéro personnel.
         if path == "/api/support":
@@ -5451,6 +5432,8 @@ class App(SimpleHTTPRequestHandler):
 
             response.pop("payment_initialization_pending", None)
             with db() as conn:
+                if response.get("payment_url"):
+                    conn.execute("UPDATE rides SET passenger_payment_url=%s WHERE id=%s",(response["payment_url"],ride_id))
                 booking_requests.finish(conn, booking_request, response)
             return self.sendj(response, 201)
 
@@ -6213,6 +6196,7 @@ if __name__ == "__main__":
         document_ocr.smoke_test()
 
     init()
+    threading.Thread(target=ride_refunds.worker,args=(db,PAYTECH_API_KEY,PAYTECH_API_SECRET),daemon=True,name="ride-refunds").start()
     threading.Thread(target=journey_notifications.worker,args=(db,),daemon=True,name="journey-push").start()
     threading.Thread(target=expiry_reminder_worker, daemon=True, name="driver-expiry-reminders").start()
 

@@ -27,7 +27,7 @@ class BookingHTTP(unittest.TestCase):
   self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.path=Path(self.temp.name)/'test.db'
   columns=re.search(r'INSERT INTO rides\((.*?)\)\s*VALUES',Path(app.__file__).read_text(),re.S).group(1)
   with sqlite3.connect(self.path) as c:
-   c.execute('CREATE TABLE rides('+','.join(n.strip()+' TEXT' for n in columns.split(','))+')');c.execute(bookings.SCHEMA)
+   c.execute('CREATE TABLE rides('+','.join(n.strip()+' TEXT' for n in columns.split(','))+',passenger_payment_url TEXT)');c.execute(bookings.SCHEMA)
   @contextmanager
   def db():
    c=sqlite3.connect(self.path,timeout=10);c.row_factory=sqlite3.Row

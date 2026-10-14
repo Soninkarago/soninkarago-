@@ -1,5 +1,6 @@
 """Private course reports and cancellation previews. No invented refund confirmation."""
 import re, time
+import ride_refunds
 from urllib.parse import parse_qs, urlparse
 from journey_experience import owned
 
@@ -36,4 +37,9 @@ def handle_get(app, path, db):
         ride = owned(conn, match[1], token)
     if not ride:
         app.sendj({'error': 'Non autorisé'}, 401); return True
-    app.sendj(report(ride) if match[2] == 'report' else cancellation(ride)); return True
+    with db() as conn:
+        result={**report(ride),**ride_refunds.fields(conn,ride['id'])} if match[2]=='report' else ride_refunds.preview(conn,ride)
+    if result.get('refund',{}):
+        result['refunded_amount']=result['refund']['amount'] if result['refund']['status']=='confirmed' else 0
+    if match[2]=='report' and ride.get('status')=='cancelled':result['balance_due']=0
+    app.sendj(result); return True
