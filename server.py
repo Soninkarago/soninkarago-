@@ -1,6 +1,7 @@
 import journey_assistant
 import journey_chat
 import passenger_history
+import journey_service
 import journey_support
 import journey_notifications
 import journey_events
@@ -55,7 +56,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.08-v70-public-help"
+APP_VERSION = "2026.10.14-v71-course-service"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -2893,6 +2894,8 @@ class App(SimpleHTTPRequestHandler):
             return
         if journey_chat.handle_get(self,path,db):
             return
+        if journey_service.handle_get(self,path,db):
+            return
         if journey_support.handle_get(self,path,db):
             return
         if journey_experience.handle_get(self,path,db):
@@ -3172,6 +3175,10 @@ class App(SimpleHTTPRequestHandler):
                 "eta_source": eta_source,
                 "eta_gps_fresh": bool(driver_gps_fresh),
                 "payment_status": row.get("payment_status", "unpaid"),
+                "deposit_amount": row.get("deposit_amount", 0),
+                "balance_due": row.get("balance_due", 0),
+                "created_at": row.get("created_at"),
+                "cancellation": journey_service.cancellation(row),
                 "can_cancel": (
                     row.get("status") in ("searching", "offered", "payment_failed", "payment_canceled")
                     and row.get("payment_status", "unpaid") in ("unpaid", "failed")
@@ -3275,7 +3282,9 @@ class App(SimpleHTTPRequestHandler):
                     for item in rows:
                         route=conn.execute('SELECT stops FROM journey_routes WHERE ride_id=%s',(item['id'],)).fetchone()
                         item['stops']=json.loads(route['stops']) if route else []
-                        item['pickup_code_required']=bool(conn.execute('SELECT ride_id FROM journey_codes WHERE ride_id=%s',(item['id'],)).fetchone())
+                        code=conn.execute('SELECT ride_id,verified_at FROM journey_codes WHERE ride_id=%s',(item['id'],)).fetchone()
+                        item['pickup_code_required']=bool(code)
+                        item['pickup_verified']=bool(code and code.get('verified_at'))
             return self.sendj(rows)
         if path == "/api/driver/application":
             user = self.auth()
@@ -5404,7 +5413,7 @@ class App(SimpleHTTPRequestHandler):
                         "SN-2026-09-v2"
                     )
                 )
-                if data.get('pickup_code_enabled') is True and not is_minicar:
+                if data.get('pickup_code_enabled') is True:
                     journey_experience.ensure_code(conn,ride_id)
                 if not is_minicar and (data.get('journey_features') is True or (local_ride or urban_ride) and quote.get('stops')):
                     conn.execute('INSERT INTO journey_routes(ride_id,route_polyline,quote_token,stops) VALUES(%s,%s,%s,%s) ON CONFLICT(ride_id) DO NOTHING',(ride_id,quote.get('route_polyline',''),str(data.get('quote_token') or ''),json.dumps(quote.get('stops') or [])))
@@ -5540,6 +5549,8 @@ class App(SimpleHTTPRequestHandler):
 
                 modern=conn.execute('SELECT ride_id FROM journey_codes WHERE ride_id=%s',(ride_id,)).fetchone()
                 if modern:
+                    if ride['vehicle']=='Minicar 14 places' and data.get('minicar_pickup_code_supported') is not True:
+                        return self.sendj({'error':'Mettez à jour l’application chauffeur pour confirmer la montée des passagers du minicar par code.'},409)
                     if data.get('pickup_code_supported') is not True:
                         return self.sendj({'error':'Mettez à jour l’application chauffeur pour accepter les courses avec code de prise en charge.'},409)
                     profile=conn.execute("SELECT p.driver_id FROM driver_profiles p JOIN drivers d ON d.id=p.driver_id WHERE p.driver_id=%s AND p.status='approved' AND UPPER(p.plate)=UPPER(d.vehicle_plate)",(driver_id,)).fetchone()
@@ -5877,6 +5888,7 @@ class App(SimpleHTTPRequestHandler):
                               vehicle='Minicar 14 places'
                               AND payment_status='fully_paid'
                               AND status='fully_paid'
+                              AND (NOT EXISTS(SELECT 1 FROM journey_codes c WHERE c.ride_id=rides.id) OR EXISTS(SELECT 1 FROM journey_codes c WHERE c.ride_id=rides.id AND c.verified_at IS NOT NULL))
                           )
                           OR
                           (

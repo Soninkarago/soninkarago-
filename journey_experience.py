@@ -37,7 +37,7 @@ def trust_fields(conn,ride):
     profile=conn.execute("SELECT p.* FROM driver_profiles p JOIN drivers d ON d.id=p.driver_id WHERE p.driver_id=%s AND p.status='approved' AND UPPER(p.plate)=UPPER(d.vehicle_plate)",(ride.get('driver_id') or '',)).fetchone()
     rating=conn.execute('SELECT AVG(stars) AS average,COUNT(*) AS count FROM journey_ratings WHERE driver_id=%s',(ride.get('driver_id') or '',)).fetchone()
     recovered={**dict(route),'stops':json.loads(route['stops'])} if route else {}
-    return {**recovered,'pickup_code':code['code'] if code and ride.get('status') in ('searching','offered','accepted','arriving') else None,
+    return {**recovered,'pickup_code':code['code'] if code and not code.get('verified_at') and ride.get('status') in ('searching','offered','accepted','arriving','deposit_paid','fully_paid') else None,
             'pickup_verified':bool(code and code.get('verified_at')),
             'driver_profile':{k:profile[k] for k in ('make','model','color','plate','portrait','vehicle_photo','updated_at')} if profile and ride.get('status') in ACTIVE else None,
             'driver_rating':round(float(rating['average']),1) if rating and rating['average'] is not None else None,
@@ -90,8 +90,10 @@ def handle_post(app,path,data,db):
                 if ride.get('status')!='accepted' or ride.get('vehicle')=='Minicar 14 places':app.sendj({'error':'Arrivée indisponible pour cette course.'},409);return True
                 conn.execute("UPDATE rides SET status='arriving' WHERE id=%s",(ride_id,));app.sendj({'ok':True});return True
             if ride.get('status')=='in_progress':app.sendj({'ok':True,'already_started':True});return True
-            if ride.get('vehicle')=='Minicar 14 places' or ride.get('status') not in ('accepted','arriving'):app.sendj({'error':'Cette course ne peut pas démarrer.'},409);return True
+            is_minicar=ride.get('vehicle')=='Minicar 14 places'
+            if ride.get('status') not in (('accepted','deposit_paid','fully_paid') if is_minicar else ('accepted','arriving')):app.sendj({'error':'Cette course ne peut pas démarrer.'},409);return True
             code=ensure_code(conn,ride_id);now=int(time.time())
+            if code.get('verified_at'):app.sendj({'ok':True,'already_started':True});return True
             if code['locked_until']>now:app.sendj({'error':'Trop de tentatives. Réessayez dans 10 minutes.'},429);return True
             supplied=str(data.get('code') or '')
             if not re.fullmatch(r'\d{4}',supplied) or not hmac.compare_digest(code['code'],supplied):
@@ -99,7 +101,8 @@ def handle_post(app,path,data,db):
                 conn.execute('UPDATE journey_codes SET attempts=%s,locked_until=%s WHERE ride_id=%s',(attempts,now+600 if attempts>=5 else 0,ride_id))
                 app.sendj({'error':'Code incorrect. Demandez les quatre chiffres au passager.'},400);return True
             conn.execute('UPDATE journey_codes SET verified_at=%s,attempts=0,locked_until=0 WHERE ride_id=%s',(now,ride_id))
-            conn.execute("UPDATE rides SET status='in_progress' WHERE id=%s",(ride_id,));app.sendj({'ok':True});return True
+            if not is_minicar:conn.execute("UPDATE rides SET status='in_progress' WHERE id=%s",(ride_id,))
+            app.sendj({'ok':True,'pickup_verified':True});return True
         ride=owned(conn,ride_id,data.get('tracking_token'))
         if not ride:app.sendj({'error':'Non autorisé'},401);return True
         if action=='share':
