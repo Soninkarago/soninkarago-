@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 import json
 import os
+import sys
 import re
 import time
 import hmac
@@ -58,7 +59,7 @@ PUBLIC_BASE_URL = os.environ.get(
     "https://soninkarago-mzp6.onrender.com"
 ).rstrip("/")
 
-APP_VERSION = "2026.10.14-v72-passenger-refunds"
+APP_VERSION = "2026.10.15-v73-http-burst-queue"
 MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 DAKAR_BASE_FARE = int(os.environ.get("DAKAR_BASE_FARE", "500"))
 DAKAR_PRICE_PER_KM = int(os.environ.get("DAKAR_PRICE_PER_KM", "150"))
@@ -6144,14 +6145,17 @@ class App(SimpleHTTPRequestHandler):
 class BoundedHTTPServer(ThreadingHTTPServer):
     """Limit concurrent handlers instead of allocating an unbounded thread/DB set."""
     daemon_threads = True
+    request_queue_size = 128
+    request_slot_timeout = 2.0
 
     def __init__(self, *args, **kwargs):
         self.slots = threading.BoundedSemaphore(16)
         super().__init__(*args, **kwargs)
 
     def process_request(self, request, client_address):
-        if not self.slots.acquire(blocking=False):
+        if not self.slots.acquire(timeout=self.request_slot_timeout):
             try:
+                print("http_capacity_rejected status=503 reason=handler_wait_timeout", file=sys.stderr, flush=True)
                 request.settimeout(1)
                 body = b'{"error":"Service temporairement occupe"}'
                 request.sendall(b'HTTP/1.0 503 Service Unavailable\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nRetry-After: 5\r\nContent-Length: ' + str(len(body)).encode() + b'\r\n\r\n' + body)
