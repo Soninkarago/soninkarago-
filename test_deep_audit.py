@@ -106,6 +106,7 @@ class AuditBoundaries(unittest.TestCase):
                     if count[0]==16:entered.set()
                 release.wait(3);self.sendj({'ok':True})
         server=app.BoundedHTTPServer(('127.0.0.1',0),Slow)
+        server.request_slot_timeout = 0.05
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start();clients=[]
         try:
             for _ in range(16):
